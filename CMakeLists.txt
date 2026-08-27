@@ -67,6 +67,7 @@ target_link_libraries(NotionRecorder PRIVATE
     "-framework VideoToolbox"
     "-framework Foundation"
     "-framework AppKit"
+    "-framework Carbon"
 )
 
 # Self-test: synthetic frames -> encode -> fragmented MP4 (no screen/mic access).
@@ -105,6 +106,10 @@ qt_add_qml_module(NotionRecorder
         src/ui/qml/RegionSelector.qml
 )
 
+# Deploy the QML module into the app bundle (qmldir + sources) and finalize
+# macOS bundle metadata.
+qt_finalize_executable(NotionRecorder)
+
 set_source_files_properties(
     src/capture/macos/ScreenCaptureKitCapturer.mm
     src/capture/macos/CoreAudioCapturer.mm
@@ -112,6 +117,14 @@ set_source_files_properties(
 )
 
 if(APPLE)
+    # Deploy the generated QML module directory into the bundle so the app
+    # runs from build/NotionRecorder.app without extra import paths.
+    add_custom_command(TARGET NotionRecorder POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/NotionRecorder"
+            "$<TARGET_BUNDLE_CONTENT_DIR:NotionRecorder>/Resources/qml/NotionRecorder"
+        COMMENT "Deploying QML module into app bundle"
+    )
     # Screen recording / microphone usage descriptions
     set_target_properties(NotionRecorder PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist"

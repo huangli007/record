@@ -3,9 +3,11 @@ import NotionRecorder
 
 Window {
     id: sel
-    visible: false
+    x: 0
+    y: 0
+    width: Screen.width
+    height: Screen.height
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-    visibility: Window.FullScreen
     color: "#00000000"
     modality: Qt.ApplicationModal
 
@@ -186,7 +188,18 @@ Window {
         opacity: 0.85
     }
 
-    Keys.onEscapePressed: cancel()
-    Keys.onReturnPressed: confirm()
-    Keys.onEnterPressed: confirm()
+    onVisibleChanged: {
+        if (visible) {
+            keyHandler.forceActiveFocus()
+        }
+    }
+
+    Item {
+        id: keyHandler
+        anchors.fill: parent
+        focus: true
+        Keys.onEscapePressed: cancel()
+        Keys.onReturnPressed: confirm()
+        Keys.onEnterPressed: confirm()
+    }
 }

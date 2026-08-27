@@ -195,7 +195,10 @@ bool VideoEncoder::encode(VideoFrame&& frame) {
         avFrame->format = AV_PIX_FMT_VIDEOTOOLBOX;
         avFrame->width = options_.width;
         avFrame->height = options_.height;
+        // FFmpeg >= 9 reads the CVPixelBuffer from data[3] for
+        // AV_PIX_FMT_VIDEOTOOLBOX frames; keep data[0] for older versions.
         avFrame->data[0] = reinterpret_cast<uint8_t*>(pb);
+        avFrame->data[3] = reinterpret_cast<uint8_t*>(pb);
         avFrame->linesize[0] = 0;
         avFrame->buf[0] = buffer;
     } else {

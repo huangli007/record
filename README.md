@@ -13,6 +13,9 @@
 - **时间基准**：统一微秒单调时钟，音视频时间戳对齐（PRD 50ms 容差目标）
 - **UI**：Qt 6 QML，Notion 极简风格——悬浮控制条（始终置顶）、区域选择遮罩、四栏设置弹窗（通用/视频/音频/热键）
 - **状态机**：空闲 → 录制 → 暂停 → 停止 → 保存，暂停不计入时长
+- **全局热键**：⌘⇧R 开始/停止、⌘⇧P 暂停/继续（Carbon EventHotKey，无需辅助功能权限）
+- **性能监控**：录制中悬浮条实时显示 CPU 占用率，≥80% 时红色提示（PRD 性能监控指标）
+- **保存通知**：录制结束/出错自动弹出 Toast 提示与文件路径
 
 ## 环境要求
 
@@ -28,6 +31,9 @@ open build/NotionRecorder.app
 ```
 
 首次运行需要在 **系统设置 → 隐私与安全性 → 屏幕录制** 中授权；录制麦克风时需要 **麦克风** 授权。
+
+QML 模块在构建时自动部署到 app bundle 的 `Resources/qml/`，直接运行
+`build/NotionRecorder.app` 即可，无需额外设置导入路径。
 
 ## 管线自测（无需录屏/麦克风权限）
 
@@ -92,14 +98,31 @@ CoreAudio（麦克风）────────────────┘
 
 ### 性能监控
 
-悬浮条工具提示显示当前编码器名称；`AppController` 每 250ms 轮询采集队列与编码队列深度，可扩展为 PRD 中的 CPU/GPU 占用提示。
+悬浮条工具提示显示当前编码器名称；`AppController` 每 250ms 轮询采集/编码队列深度，
+并通过 `host_processor_info` 计算 CPU 占用率（增量采样）。录制中 CPU ≥ 80% 时显示红色
+提示；GPU 占用监测与"自动降参数建议"留待后续版本。
+
+### 全局热键
+
+使用 Carbon `RegisterEventHotKey` 注册 ⌘⇧R（开始/停止）与 ⌘⇧P（暂停/继续），
+无需辅助功能权限即可全局响应。热键定义集中在 `AppController::setupHotkeys()`，
+后续可接入设置弹窗中的热键配置项。
 
 ## 当前限制与后续路线
 
 - 区域录制当前以 1x 缩放捕获（Retina 屏会降低分辨率），后续可改进为按屏幕缩放比捕获
-- 全局热键、点击特效、WebRTC 降噪、实时标注、任务管理、云端上传为后续版本
+- 点击特效（SCK `showMouseClicks` 已支持，UI 开关已接入）、WebRTC 降噪、实时标注、任务管理、云端上传为后续版本
 - Windows DXGI/WASAPI/NVENC/QSV/AMF 路径已预留接口，未实现
 - 分辨率变化/音频设备插拔的自动恢复逻辑（PRD 关键实现要点）尚未完全接入，当前 SCK 异常停止会触发错误提示
+
+## 已修复的兼容性问题
+
+- **FFmpeg 9.x videotoolbox 崩溃**：FFmpeg 9 的 `videotoolboxenc.c` 从
+  `frame->data[3]` 读取 CVPixelBuffer（旧版本读 `data[0]`），编码前需同时填充
+  `data[0]` 与 `data[3]`，否则断言崩溃。
+- **QML 模块部署**：`qt_finalize_executable` 后仍需将生成的模块目录拷贝进
+  app bundle 的 `Resources/qml/`，`main.cpp` 同时显式添加该导入路径，保证
+  从构建目录直接运行。
 
 ## 文档对照
 
@@ -111,5 +134,6 @@ CoreAudio（麦克风）────────────────┘
 | 编码（硬件优先 + CRF/CBR） | ✅ videotoolbox / x264 |
 | 封装（fragmented MP4） | ✅ |
 | UI（悬浮条/设置/区域选择） | ✅ Qt 6 QML |
-| 性能监控 | 🟡 队列深度（CPU/GPU 占用待接入） |
-| 窗口锁定 / 点击特效 / 热键 / 降噪 | ⏳ 后续版本 |
+| 性能监控 | ✅ CPU 占用 + 队列深度（GPU 待接入） |
+| 全局热键 | ✅ ⌘⇧R / ⌘⇧P |
+| 窗口锁定 / 降噪 / 实时标注 | ⏳ 后续版本 |

@@ -6,6 +6,12 @@
 
 #include <cmath>
 
+#if defined(__APPLE__)
+#include <Carbon/Carbon.h>
+#include <mach/mach_host.h>
+#include <mach/processor_info.h>
+#endif
+
 namespace nr {
 
 namespace {
@@ -26,15 +32,75 @@ QString formatElapsed(int64_t microseconds) {
         .arg(seconds, 2, 10, QLatin1Char('0'));
 }
 
+#if defined(__APPLE__)
+enum {
+    kHotKeyToggleRecording = 1,
+    kHotKeyTogglePause = 2,
+};
+
+// Called on the main event loop when a registered global hotkey is pressed.
+OSStatus hotKeyEventHandler(EventHandlerCallRef, EventRef event, void* userData) {
+    EventHotKeyID hotKeyId{};
+    GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, nullptr,
+                      sizeof(hotKeyId), nullptr, &hotKeyId);
+    auto* controller = static_cast<AppController*>(userData);
+    if (hotKeyId.id == kHotKeyToggleRecording) {
+        controller->toggleRecording();
+    } else if (hotKeyId.id == kHotKeyTogglePause) {
+        controller->togglePause();
+    }
+    return noErr;
+}
+
+// Cumulative CPU ticks since boot; caller keeps previous values for the delta.
+bool readCpuTicks(long long& user, long long& system, long long& idle) {
+    processor_info_array_t cpuInfo = nullptr;
+    mach_msg_type_number_t numCpuInfo = 0;
+    natural_t numCpus = 0;
+    const kern_return_t status = host_processor_info(
+        mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &numCpus, &cpuInfo, &numCpuInfo);
+    if (status != KERN_SUCCESS || !cpuInfo) {
+        return false;
+    }
+    auto* info = reinterpret_cast<processor_cpu_load_info_t>(cpuInfo);
+    user = 0;
+    system = 0;
+    idle = 0;
+    for (natural_t i = 0; i < numCpus; ++i) {
+        user += info[i].cpu_ticks[CPU_STATE_USER];
+        system += info[i].cpu_ticks[CPU_STATE_SYSTEM];
+        idle += info[i].cpu_ticks[CPU_STATE_IDLE];
+    }
+    vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(cpuInfo),
+                  numCpuInfo * sizeof(processor_cpu_load_info));
+    return true;
+}
+#endif
+
 } // namespace
 
 AppController::AppController(QObject* parent)
     : QObject(parent), config_(RecordingConfig::defaults()) {
     connect(&statsTimer_, &QTimer::timeout, this, &AppController::refreshStats);
     statsTimer_.setInterval(250);
+#if defined(__APPLE__)
+    setupHotkeys();
+#endif
 }
 
-AppController::~AppController() = default;
+AppController::~AppController() {
+#if defined(__APPLE__)
+    if (hotKeyToggleRef_) {
+        UnregisterEventHotKey(reinterpret_cast<EventHotKeyRef>(hotKeyToggleRef_));
+    }
+    if (hotKeyPauseRef_) {
+        UnregisterEventHotKey(reinterpret_cast<EventHotKeyRef>(hotKeyPauseRef_));
+    }
+    if (hotKeyEventHandlerRef_) {
+        RemoveEventHandler(reinterpret_cast<EventHandlerRef>(hotKeyEventHandlerRef_));
+    }
+#endif
+}
 
 QString AppController::statusText() const {
     if (errorMessage_.isEmpty() && session_ && session_->state() == RecordingSession::State::Error) {
@@ -77,6 +143,14 @@ int AppController::inputQueueDepth() const {
 
 int AppController::outputQueueDepth() const {
     return session_ ? static_cast<int>(session_->encodedQueueDepth()) : 0;
+}
+
+int AppController::cpuPercent() const {
+    return cpuPercent_;
+}
+
+bool AppController::highLoad() const {
+    return isRecording() && cpuPercent_ >= 80;
 }
 
 QString AppController::lastFilePath() const {
@@ -167,10 +241,45 @@ void AppController::handleState(RecordingSession::State state) {
 
 void AppController::refreshStats() {
     if (session_) {
+#if defined(__APPLE__)
+        long long user = 0, system = 0, idle = 0;
+        if (readCpuTicks(user, system, idle)) {
+            const long long totalDelta =
+                (user - lastUserTicks_) + (system - lastSystemTicks_) + (idle - lastIdleTicks_);
+            if (lastUserTicks_ != 0 && totalDelta > 0) {
+                cpuPercent_ = static_cast<int>(std::lround(
+                    100.0 * ((user - lastUserTicks_) + (system - lastSystemTicks_)) /
+                    static_cast<double>(totalDelta)));
+            }
+            lastUserTicks_ = user;
+            lastSystemTicks_ = system;
+            lastIdleTicks_ = idle;
+        }
+#endif
         Q_EMIT statsChanged();
         Q_EMIT elapsedChanged();
     }
 }
+
+#if defined(__APPLE__)
+void AppController::setupHotkeys() {
+    EventTypeSpec eventType{kEventClassKeyboard, kEventHotKeyPressed};
+    InstallEventHandler(GetEventDispatcherTarget(), hotKeyEventHandler, 1, &eventType,
+                        this, reinterpret_cast<EventHandlerRef*>(&hotKeyEventHandlerRef_));
+
+    EventHotKeyID hotKeyId{'NRHK', kHotKeyToggleRecording};
+    RegisterEventHotKey(kVK_ANSI_R, cmdKey | shiftKey, hotKeyId,
+                        GetEventDispatcherTarget(), 0,
+                        reinterpret_cast<EventHotKeyRef*>(&hotKeyToggleRef_));
+
+    hotKeyId.id = kHotKeyTogglePause;
+    RegisterEventHotKey(kVK_ANSI_P, cmdKey | shiftKey, hotKeyId,
+                        GetEventDispatcherTarget(), 0,
+                        reinterpret_cast<EventHotKeyRef*>(&hotKeyPauseRef_));
+}
+#else
+void AppController::setupHotkeys() {}
+#endif
 
 void AppController::setRegion(int x, int y, int width, int height) {
     config_.video.mode = CaptureMode::Region;

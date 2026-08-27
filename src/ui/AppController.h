@@ -22,6 +22,8 @@ class AppController : public QObject {
     Q_PROPERTY(QString encoderName READ encoderName NOTIFY stateChanged)
     Q_PROPERTY(int inputQueueDepth READ inputQueueDepth NOTIFY statsChanged)
     Q_PROPERTY(int outputQueueDepth READ outputQueueDepth NOTIFY statsChanged)
+    Q_PROPERTY(int cpuPercent READ cpuPercent NOTIFY statsChanged)
+    Q_PROPERTY(bool highLoad READ highLoad NOTIFY statsChanged)
     Q_PROPERTY(QString lastFilePath READ lastFilePath NOTIFY sessionFinished)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY stateChanged)
 
@@ -36,6 +38,8 @@ public:
     QString encoderName() const;
     int inputQueueDepth() const;
     int outputQueueDepth() const;
+    int cpuPercent() const;
+    bool highLoad() const;
     QString lastFilePath() const;
     QString errorMessage() const;
 
@@ -72,12 +76,24 @@ private:
     void startRecording();
     void stopRecording();
     void refreshStats();
+    void setupHotkeys();
 
     RecordingConfig config_;
     std::unique_ptr<RecordingSession> session_;
     QTimer statsTimer_;
     QString lastFilePath_;
     QString errorMessage_;
+
+    // Global hotkeys (Carbon EventHotKey): ⌘⇧R start/stop, ⌘⇧P pause.
+    void* hotKeyEventHandlerRef_ = nullptr;
+    void* hotKeyToggleRef_ = nullptr;
+    void* hotKeyPauseRef_ = nullptr;
+
+    // CPU sampling state.
+    long long lastUserTicks_ = 0;
+    long long lastSystemTicks_ = 0;
+    long long lastIdleTicks_ = 0;
+    int cpuPercent_ = 0;
 };
 
 } // namespace nr

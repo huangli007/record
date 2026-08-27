@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QCoreApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
@@ -11,6 +12,8 @@ int main(int argc, char** argv) {
 
     nr::AppController controller;
     QQmlApplicationEngine engine;
+    engine.addImportPath(QCoreApplication::applicationDirPath() +
+                         QStringLiteral("/../Resources/qml"));
     engine.rootContext()->setContextProperty("app", &controller);
 
     QObject::connect(

@@ -9,6 +9,9 @@ Item {
 
     property point dragOffset: Qt.point(0, 0)
     property var rootWindow: null
+    property var settingsDialog: null
+    property var regionSelector: null
+    property bool encoderHovered: false
 
     layer.enabled: true
     layer.effect: MultiEffect {
@@ -60,12 +63,16 @@ Item {
             elide: Text.ElideRight
 
             ToolTip.text: app.encoderName
-            ToolTip.visible: hoverArea.hovered && app.encoderName.length > 0
+            ToolTip.visible: bar.encoderHovered && app.encoderName.length > 0
+            ToolTip.delay: 600
+
             MouseArea {
                 id: hoverArea
                 anchors.fill: parent
                 hoverEnabled: true
                 acceptedButtons: Qt.NoButton
+                onEntered: bar.encoderHovered = true
+                onExited: bar.encoderHovered = false
             }
         }
 
@@ -172,7 +179,7 @@ Item {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: regionSelector.open()
+                onClicked: bar.regionSelector !== null ? bar.regionSelector.open() : null
             }
         }
 
@@ -195,7 +202,7 @@ Item {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: settingsDialog.open()
+                onClicked: bar.settingsDialog !== null ? bar.settingsDialog.open() : null
             }
         }
 
@@ -222,5 +229,17 @@ Item {
                 onClicked: app.openOutputFolder()
             }
         }
+    }
+
+    // Tiny CPU load indicator while recording (PRD performance monitoring).
+    Text {
+        anchors.left: parent.left
+        anchors.leftMargin: 20
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 2
+        text: "CPU " + app.cpuPercent + "%"
+        color: app.highLoad ? "#EB5757" : "#D3D1CA"
+        font.pixelSize: 9
+        visible: app.recording
     }
 }
