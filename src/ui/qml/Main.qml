@@ -22,12 +22,17 @@ Window {
         visible: app.recording && app.annotationMode
     }
 
+    RecordingHistory {
+        id: historyDialog
+    }
+
     FloatingBar {
         anchors.fill: parent
         anchors.margins: 10
         rootWindow: root
         settingsDialog: settingsDialog
         regionSelector: regionSelector
+        historyDialog: historyDialog
     }
 
     // Transient notification toast (auto-save result / errors).

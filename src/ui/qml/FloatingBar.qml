@@ -11,6 +11,7 @@ Item {
     property var rootWindow: null
     property var settingsDialog: null
     property var regionSelector: null
+    property var historyDialog: null
     property bool encoderHovered: false
 
     layer.enabled: true
@@ -206,7 +207,7 @@ Item {
             }
         }
 
-        // File list
+        // Recording history
         Rectangle {
             id: filesButton
             anchors.verticalCenter: parent.verticalCenter
@@ -226,7 +227,7 @@ Item {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: app.openOutputFolder()
+                onClicked: bar.historyDialog !== null ? bar.historyDialog.open() : null
             }
         }
 

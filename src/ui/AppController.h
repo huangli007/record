@@ -29,6 +29,11 @@ class AppController : public QObject {
     Q_PROPERTY(int cpuPercent READ cpuPercent NOTIFY statsChanged)
     Q_PROPERTY(bool highLoad READ highLoad NOTIFY statsChanged)
     Q_PROPERTY(QVariantList windowList READ windowList NOTIFY windowsChanged)
+    Q_PROPERTY(QVariantList recordingHistory READ recordingHistory NOTIFY historyChanged)
+    Q_PROPERTY(bool scheduling READ isScheduling NOTIFY scheduleChanged)
+    Q_PROPERTY(bool scheduledRecording READ scheduledRecording WRITE setScheduledRecording NOTIFY settingsChanged)
+    Q_PROPERTY(int scheduledDelay READ scheduledDelay WRITE setScheduledDelay NOTIFY settingsChanged)
+    Q_PROPERTY(int scheduledDuration READ scheduledDuration WRITE setScheduledDuration NOTIFY settingsChanged)
     Q_PROPERTY(QString lastFilePath READ lastFilePath NOTIFY sessionFinished)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY stateChanged)
     Q_PROPERTY(int captureModeIndex READ captureModeIndex NOTIFY settingsChanged)
@@ -62,6 +67,14 @@ public:
     int cpuPercent() const;
     bool highLoad() const;
     QVariantList windowList() const;
+    QVariantList recordingHistory() const;
+    bool isScheduling() const;
+    bool scheduledRecording() const;
+    void setScheduledRecording(bool enabled);
+    int scheduledDelay() const;
+    void setScheduledDelay(int seconds);
+    int scheduledDuration() const;
+    void setScheduledDuration(int seconds);
     QString lastFilePath() const;
     QString errorMessage() const;
     int captureModeIndex() const;
@@ -87,6 +100,8 @@ public:
     Q_INVOKABLE void setCaptureMode(int mode);  // 0 = full screen, 1 = region
     Q_INVOKABLE void refreshWindows();
     Q_INVOKABLE void pickWindow(int windowId);
+    Q_INVOKABLE void refreshHistory();
+    Q_INVOKABLE void revealRecording(const QString& path);
     Q_INVOKABLE void setFps(int fps);           // 0 = auto
     Q_INVOKABLE void setCaptureCursor(bool enabled);
     Q_INVOKABLE void setClickEffects(bool enabled);
@@ -110,6 +125,8 @@ Q_SIGNALS:
     void elapsedChanged();
     void statsChanged();
     void windowsChanged();
+    void historyChanged();
+    void scheduleChanged();
     void settingsChanged();
     void annotationModeChanged();
     void sessionFinished(const QString& path);
@@ -123,6 +140,8 @@ private:
     void setupHotkeys();
     void loadSettings();
     void saveSettings();
+    void startCountdown();
+    void cancelSchedule();
 
     RecordingConfig config_;
     std::unique_ptr<RecordingSession> session_;
@@ -142,6 +161,9 @@ private:
     int cpuPercent_ = 0;
     std::vector<struct WindowInfo> windowInfos_;
     QVariantList windowList_;
+    QVariantList recordingHistory_;
+    QTimer scheduleTimer_;
+    int countdownLeft_ = 0;
 };
 
 } // namespace nr

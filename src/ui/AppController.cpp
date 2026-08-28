@@ -1,5 +1,7 @@
 #include "ui/AppController.h"
 
+#include <QDateTime>
+#include <QDir>
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QSettings>
@@ -88,6 +90,23 @@ AppController::AppController(QObject* parent)
     loadSettings();
     connect(&statsTimer_, &QTimer::timeout, this, &AppController::refreshStats);
     statsTimer_.setInterval(250);
+    connect(&scheduleTimer_, &QTimer::timeout, this, [this] {
+        if (countdownLeft_ > 0) {
+            --countdownLeft_;
+            Q_EMIT scheduleChanged();
+            Q_EMIT stateChanged();  // countdown shown in the status text
+            return;
+        }
+        scheduleTimer_.stop();
+        startRecording();
+        if (config_.general.scheduledDurationSec > 0 && session_) {
+            QTimer::singleShot(config_.general.scheduledDurationSec * 1000, this, [this] {
+                if (session_ && (isRecording() || isPaused())) {
+                    stopRecording();
+                }
+            });
+        }
+    });
 #if defined(__APPLE__)
     setupHotkeys();
 #endif
@@ -108,6 +127,9 @@ AppController::~AppController() {
 }
 
 QString AppController::statusText() const {
+    if (isScheduling()) {
+        return "将在 " + QString::number(countdownLeft_) + " 秒后开始录制";
+    }
     if (errorMessage_.isEmpty() && session_ && session_->state() == RecordingSession::State::Error) {
         return "录制出错";
     }
@@ -242,12 +264,112 @@ int AppController::formatIndex() const {
 }
 
 void AppController::toggleRecording() {
+    if (isScheduling()) {
+        cancelSchedule();
+        Q_EMIT stateChanged();
+        return;
+    }
     if (session_ && (session_->state() == RecordingSession::State::Recording ||
                      session_->state() == RecordingSession::State::Paused)) {
         stopRecording();
     } else if (!session_ || session_->state() == RecordingSession::State::Idle) {
-        startRecording();
+        if (config_.general.scheduledRecording && config_.general.scheduledDelaySec > 0) {
+            startCountdown();
+        } else {
+            startRecording();
+        }
     }
+}
+
+bool AppController::isScheduling() const {
+    return scheduleTimer_.isActive() && countdownLeft_ > 0;
+}
+
+void AppController::startCountdown() {
+    if (session_ && session_->state() != RecordingSession::State::Idle) {
+        return;
+    }
+    countdownLeft_ = config_.general.scheduledDelaySec;
+    scheduleTimer_.start();
+    Q_EMIT scheduleChanged();
+    Q_EMIT stateChanged();
+}
+
+void AppController::cancelSchedule() {
+    scheduleTimer_.stop();
+    countdownLeft_ = 0;
+    Q_EMIT scheduleChanged();
+}
+
+bool AppController::scheduledRecording() const {
+    return config_.general.scheduledRecording;
+}
+
+void AppController::setScheduledRecording(bool enabled) {
+    if (config_.general.scheduledRecording == enabled) {
+        return;
+    }
+    config_.general.scheduledRecording = enabled;
+    saveSettings();
+}
+
+int AppController::scheduledDelay() const {
+    return config_.general.scheduledDelaySec;
+}
+
+void AppController::setScheduledDelay(int seconds) {
+    seconds = qBound(0, seconds, 3600);
+    if (config_.general.scheduledDelaySec == seconds) {
+        return;
+    }
+    config_.general.scheduledDelaySec = seconds;
+    saveSettings();
+}
+
+int AppController::scheduledDuration() const {
+    return config_.general.scheduledDurationSec;
+}
+
+void AppController::setScheduledDuration(int seconds) {
+    seconds = qBound(0, seconds, 3600);
+    if (config_.general.scheduledDurationSec == seconds) {
+        return;
+    }
+    config_.general.scheduledDurationSec = seconds;
+    saveSettings();
+}
+
+QVariantList AppController::recordingHistory() const {
+    return recordingHistory_;
+}
+
+void AppController::refreshHistory() {
+    recordingHistory_.clear();
+    QString dir = QString::fromStdString(config_.general.outputDir);
+    if (dir.startsWith(QLatin1Char('~'))) {
+        dir.replace(0, 1, QDir::homePath());
+    }
+    QDir directory(dir);
+    const QFileInfoList files =
+        directory.entryInfoList({QStringLiteral("*.mp4"), QStringLiteral("*.mkv")},
+                                QDir::Files, QDir::Time);
+    for (const QFileInfo& file : files) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("path"), file.absoluteFilePath());
+        entry.insert(QStringLiteral("name"), file.fileName());
+        entry.insert(QStringLiteral("size"), file.size());
+        entry.insert(QStringLiteral("modified"),
+                     file.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+        recordingHistory_.append(entry);
+        if (recordingHistory_.size() >= 200) {
+            break;
+        }
+    }
+    Q_EMIT historyChanged();
+}
+
+void AppController::revealRecording(const QString& path) {
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
 void AppController::togglePause() {
@@ -306,6 +428,7 @@ void AppController::handleState(RecordingSession::State state) {
                     Q_EMIT sessionFinished(lastFilePath_);
                 }
             }
+            refreshHistory();
             Q_EMIT stateChanged();
             break;
         case RecordingSession::State::Error:
@@ -552,6 +675,18 @@ void AppController::loadSettings() {
         s.value(QStringLiteral("audio/micVolume"), config_.audio.micVolume).toInt();
     config_.audio.denoise =
         s.value(QStringLiteral("audio/denoise"), config_.audio.denoise).toBool();
+    config_.general.scheduledRecording =
+        s.value(QStringLiteral("general/scheduledRecording"),
+                config_.general.scheduledRecording)
+            .toBool();
+    config_.general.scheduledDelaySec =
+        s.value(QStringLiteral("general/scheduledDelaySec"),
+                config_.general.scheduledDelaySec)
+            .toInt();
+    config_.general.scheduledDurationSec =
+        s.value(QStringLiteral("general/scheduledDurationSec"),
+                config_.general.scheduledDurationSec)
+            .toInt();
 }
 
 void AppController::saveSettings() {
@@ -585,6 +720,12 @@ void AppController::saveSettings() {
     s.setValue(QStringLiteral("audio/systemVolume"), config_.audio.systemVolume);
     s.setValue(QStringLiteral("audio/micVolume"), config_.audio.micVolume);
     s.setValue(QStringLiteral("audio/denoise"), config_.audio.denoise);
+    s.setValue(QStringLiteral("general/scheduledRecording"),
+               config_.general.scheduledRecording);
+    s.setValue(QStringLiteral("general/scheduledDelaySec"),
+               config_.general.scheduledDelaySec);
+    s.setValue(QStringLiteral("general/scheduledDurationSec"),
+               config_.general.scheduledDurationSec);
     Q_EMIT settingsChanged();
 }
 

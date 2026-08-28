@@ -62,6 +62,9 @@ struct GeneralConfig {
     std::string outputDir = "~/Movies/NotionRecorder";
     std::string format = "mp4";  // mp4 | mkv
     bool autoSaveNotify = true;
+    bool scheduledRecording = false;
+    int scheduledDelaySec = 0;    // 0 = start immediately
+    int scheduledDurationSec = 0; // 0 = record until stopped manually
 };
 
 struct HotkeyConfig {

@@ -262,6 +262,59 @@ Window {
                     onActivated: (index) => app.setFormat(currentText)
                 }
 
+                SectionTitle { text: "定时录制" }
+                SwitchRow {
+                    id: schedSwitch
+                    label: "启用定时录制"
+                    checked: app.scheduledRecording
+                    onToggled: (value) => app.setScheduledRecording(value)
+                    Connections {
+                        target: app
+                        function onSettingsChanged() {
+                            checked = app.scheduledRecording
+                        }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text {
+                        text: "延迟"
+                        font.pixelSize: 12
+                        color: "#9B9A97"
+                    }
+                    TextField {
+                        id: delayField
+                        width: 72
+                        height: 30
+                        text: app.scheduledDelay
+                        font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter
+                        validator: IntValidator { bottom: 0; top: 3600 }
+                        onEditingFinished: app.setScheduledDelay(parseInt(text))
+                    }
+                    Text {
+                        text: "秒  时长"
+                        font.pixelSize: 12
+                        color: "#9B9A97"
+                    }
+                    TextField {
+                        id: durationField
+                        width: 72
+                        height: 30
+                        text: app.scheduledDuration
+                        font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter
+                        validator: IntValidator { bottom: 0; top: 3600 }
+                        onEditingFinished: app.setScheduledDuration(parseInt(text))
+                    }
+                    Text {
+                        text: "秒（0 = 手动停止）"
+                        font.pixelSize: 12
+                        color: "#9B9A97"
+                    }
+                }
+
                 SwitchRow {
                     label: "保存后弹出通知"
                     checked: true
@@ -497,6 +550,8 @@ Window {
             micSwitch.checked = app.microphone
             micVolumeSlider.value = app.micVolume
             denoiseSwitch.checked = app.denoise
+            delayField.text = app.scheduledDelay
+            durationField.text = app.scheduledDuration
         }
     }
 }
