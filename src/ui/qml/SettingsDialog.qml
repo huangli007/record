@@ -277,7 +277,7 @@ Window {
                 SectionTitle { text: "录制模式" }
                 ComboBox {
                     Layout.preferredWidth: 220
-                    model: ["全屏录制", "区域录制"]
+                    model: ["全屏录制", "区域录制", "窗口录制"]
                     onActivated: (index) => app.setCaptureMode(index)
                 }
 

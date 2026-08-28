@@ -76,11 +76,13 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
     if (config_.video.mode == CaptureMode::Region && config_.video.region.valid()) {
         config_.video.width = config_.video.region.width;
         config_.video.height = config_.video.region.height;
-    } else {
+    } else if (config_.video.mode == CaptureMode::FullScreen) {
         const CGRect bounds = CGDisplayBounds(CGMainDisplayID());
         config_.video.width = static_cast<int>(bounds.size.width);
         config_.video.height = static_cast<int>(bounds.size.height);
     }
+    // CaptureMode::Window keeps config_.video.width/height as set by the
+    // window picker (the capturer re-verifies the window at start).
 #endif
     if (config_.video.width <= 0 || config_.video.height <= 0) {
         config_.video.width = 1920;

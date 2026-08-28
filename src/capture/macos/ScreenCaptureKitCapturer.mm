@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -17,6 +18,24 @@
 namespace nr {
 
 namespace {
+
+// Fetches shareable content synchronously (10s timeout). Returns nil when
+// screen recording permission is missing or the fetch fails.
+SCShareableContent* fetchShareableContentSync() {
+    __block SCShareableContent* content = nil;
+    __block NSError* fetchError = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [SCShareableContent getShareableContentWithCompletionHandler:
+        ^(SCShareableContent* c, NSError* e) {
+            content = c;
+            fetchError = e;
+            dispatch_semaphore_signal(sem);
+        }];
+    dispatch_semaphore_wait(sem,
+                            dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+    (void)fetchError;
+    return content;
+}
 
 // Converts a CMSampleBuffer to an interleaved Float32 AudioFrame.
 AudioFrame makeAudioFrame(CMSampleBufferRef sampleBuffer,
@@ -233,17 +252,7 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
     }
     stop();
 
-    __block SCShareableContent* content = nil;
-    __block NSError* fetchError = nil;
-    dispatch_semaphore_t contentSem = dispatch_semaphore_create(0);
-    [SCShareableContent getShareableContentWithCompletionHandler:
-        ^(SCShareableContent* c, NSError* e) {
-            content = c;
-            fetchError = e;
-            dispatch_semaphore_signal(contentSem);
-        }];
-    dispatch_semaphore_wait(contentSem,
-                            dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+    SCShareableContent* content = fetchShareableContentSync();
     if (!content || content.displays.count == 0) {
         return false;
     }
@@ -284,6 +293,22 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
     scConfig.sampleRate = audioConfig.sampleRate > 0 ? audioConfig.sampleRate : 48000;
     scConfig.channelCount = audioConfig.channels > 0 ? audioConfig.channels : 2;
 
+    SCWindow* targetWindow = nil;
+    if (videoConfig.mode == CaptureMode::Window) {
+        if (videoConfig.windowId <= 0) {
+            return false;  // window mode requires a picked window
+        }
+        for (SCWindow* w in content.windows) {
+            if (w.windowID == static_cast<CGWindowID>(videoConfig.windowId)) {
+                targetWindow = w;
+                break;
+            }
+        }
+        if (!targetWindow) {
+            return false;  // window was closed before capture started
+        }
+    }
+
     if (videoConfig.mode == CaptureMode::Region && videoConfig.region.valid()) {
         scConfig.sourceRect = CGRectMake(videoConfig.region.x,
                                          videoConfig.region.y,
@@ -291,6 +316,19 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
                                          videoConfig.region.height);
         scConfig.width = static_cast<size_t>(videoConfig.region.width);
         scConfig.height = static_cast<size_t>(videoConfig.region.height);
+    } else if (targetWindow) {
+        // Capture the window at its current pixel size; the encoder scales
+        // dynamically if the window is resized while recording.
+        SCDisplay* winDisplay = display;
+        for (SCDisplay* d in content.displays) {
+            if (CGRectIntersectsRect(d.frame, targetWindow.frame)) {
+                winDisplay = d;
+                break;
+            }
+        }
+        const double scale = winDisplay.width / winDisplay.frame.size.width;
+        scConfig.width = static_cast<size_t>(targetWindow.frame.size.width * scale);
+        scConfig.height = static_cast<size_t>(targetWindow.frame.size.height * scale);
     } else {
         scConfig.width = display.width;
         scConfig.height = display.height;
@@ -303,8 +341,15 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
     impl_->videoBaseUs.store(0);
     impl_->audioBaseUs.store(0);
 
-    SCContentFilter* filter =
-        [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+    SCContentFilter* filter = nil;
+    if (targetWindow) {
+        filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:targetWindow];
+    } else {
+        filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+    }
+    if (!filter) {
+        return false;
+    }
     impl_->delegate = [NRSCKDelegate new];
     [impl_->delegate setOwner:this];
     impl_->queue = dispatch_queue_create("com.notionrecorder.sck",
@@ -348,6 +393,34 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
         return false;
     }
     return true;
+}
+
+std::vector<WindowInfo> ScreenCaptureKitCapturer::listWindows() {
+    std::vector<WindowInfo> result;
+    SCShareableContent* content = fetchShareableContentSync();
+    if (!content || content.windows.count == 0) {
+        return result;
+    }
+    for (SCWindow* w in content.windows) {
+        if (!w.onScreen) {
+            continue;
+        }
+        WindowInfo info;
+        info.id = static_cast<int>(w.windowID);
+        info.title = w.title ? w.title.UTF8String : "";
+        info.application =
+            w.owningApplication ? w.owningApplication.applicationName.UTF8String : "";
+        for (SCDisplay* d in content.displays) {
+            if (CGRectIntersectsRect(d.frame, w.frame)) {
+                const double scale = d.width / d.frame.size.width;
+                info.width = static_cast<int>(w.frame.size.width * scale);
+                info.height = static_cast<int>(w.frame.size.height * scale);
+                break;
+            }
+        }
+        result.push_back(std::move(info));
+    }
+    return result;
 }
 
 void ScreenCaptureKitCapturer::stop() {

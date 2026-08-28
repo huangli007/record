@@ -63,6 +63,61 @@ bool pixelBufferPlanes(CVPixelBufferRef pb, AVFrame* frame) {
 void unlockPixelBuffer(CVPixelBufferRef pb) {
     CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
 }
+
+// Scales a BGRA CVPixelBuffer to an NV12 CVPixelBuffer of the given size.
+// Used when the captured frame size differs from the encoder size (window
+// resizes, display resolution changes).
+bool scalePixelBufferToNV12(CVPixelBufferRef src, int outWidth, int outHeight,
+                            CVPixelBufferRef* out) {
+    if (!src || outWidth <= 0 || outHeight <= 0) {
+        return false;
+    }
+    CVPixelBufferRef dst = nullptr;
+    const CVReturn created = CVPixelBufferCreate(
+        kCFAllocatorDefault, outWidth, outHeight,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nullptr, &dst);
+    if (created != kCVReturnSuccess || !dst) {
+        return false;
+    }
+
+    CVPixelBufferLockBaseAddress(src, kCVPixelBufferLock_ReadOnly);
+    CVPixelBufferLockBaseAddress(dst, 0);
+
+    const uint8_t* srcData[4] = {
+        static_cast<const uint8_t*>(CVPixelBufferGetBaseAddress(src)), nullptr, nullptr, nullptr};
+    const int srcStride[4] = {
+        static_cast<int>(CVPixelBufferGetBytesPerRow(src)), 0, 0, 0};
+    uint8_t* dstData[4] = {
+        static_cast<uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(dst, 0)),
+        static_cast<uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(dst, 1)),
+        nullptr, nullptr};
+    const int dstStride[4] = {
+        static_cast<int>(CVPixelBufferGetBytesPerRowOfPlane(dst, 0)),
+        static_cast<int>(CVPixelBufferGetBytesPerRowOfPlane(dst, 1)),
+        0, 0};
+
+    SwsContext* sws = sws_getContext(
+        static_cast<int>(CVPixelBufferGetWidth(src)),
+        static_cast<int>(CVPixelBufferGetHeight(src)),
+        AV_PIX_FMT_BGRA, outWidth, outHeight, AV_PIX_FMT_NV12,
+        SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+    if (sws) {
+        sws_scale(sws, srcData, srcStride, 0,
+                  static_cast<int>(CVPixelBufferGetHeight(src)),
+                  dstData, dstStride);
+        sws_freeContext(sws);
+    }
+
+    CVPixelBufferUnlockBaseAddress(dst, 0);
+    CVPixelBufferUnlockBaseAddress(src, kCVPixelBufferLock_ReadOnly);
+
+    if (!sws) {
+        CVPixelBufferRelease(dst);
+        return false;
+    }
+    *out = dst;
+    return true;
+}
 #endif
 
 } // namespace
@@ -189,6 +244,18 @@ bool VideoEncoder::encode(VideoFrame&& frame) {
 
     if (hardware_) {
         CVPixelBufferRef pb = frame.pixelBuffer;
+        CVPixelBufferRef scaled = nullptr;
+        const int srcW = static_cast<int>(CVPixelBufferGetWidth(pb));
+        const int srcH = static_cast<int>(CVPixelBufferGetHeight(pb));
+        if (srcW != options_.width || srcH != options_.height) {
+            // Window resized / display changed: scale into a fixed-size
+            // NV12 pixel buffer before handing it to VideoToolbox.
+            if (!scalePixelBufferToNV12(pb, options_.width, options_.height, &scaled)) {
+                av_frame_free(&avFrame);
+                return false;
+            }
+            pb = scaled;
+        }
         CVPixelBufferRetain(pb);
         AVBufferRef* buffer = av_buffer_create(
             reinterpret_cast<uint8_t*>(pb), 1, releasePixelBuffer, nullptr, 0);
@@ -201,6 +268,10 @@ bool VideoEncoder::encode(VideoFrame&& frame) {
         avFrame->data[3] = reinterpret_cast<uint8_t*>(pb);
         avFrame->linesize[0] = 0;
         avFrame->buf[0] = buffer;
+        if (scaled) {
+            // The wrapping buffer now owns the only reference we keep.
+            CVPixelBufferRelease(scaled);
+        }
     } else {
         // Software path: convert CVPixelBuffer -> YUV420P via swscale.
         CVPixelBufferRef pb = frame.pixelBuffer;

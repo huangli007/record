@@ -3,8 +3,11 @@
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <cmath>
+
+#include "capture/macos/ScreenCaptureKitCapturer.h"
 
 #if defined(__APPLE__)
 #include <Carbon/Carbon.h>
@@ -153,6 +156,10 @@ bool AppController::highLoad() const {
     return isRecording() && cpuPercent_ >= 80;
 }
 
+QVariantList AppController::windowList() const {
+    return windowList_;
+}
+
 QString AppController::lastFilePath() const {
     return lastFilePath_;
 }
@@ -289,7 +296,45 @@ void AppController::setRegion(int x, int y, int width, int height) {
 }
 
 void AppController::setCaptureMode(int mode) {
-    config_.video.mode = mode == 1 ? CaptureMode::Region : CaptureMode::FullScreen;
+    if (mode == 1) {
+        config_.video.mode = CaptureMode::Region;
+    } else if (mode == 2) {
+        config_.video.mode = CaptureMode::Window;
+    } else {
+        config_.video.mode = CaptureMode::FullScreen;
+    }
+    if (mode != 2) {
+        config_.video.windowId = 0;
+    }
+}
+
+void AppController::refreshWindows() {
+    windowInfos_ = ScreenCaptureKitCapturer::listWindows();
+    windowList_.clear();
+    for (const WindowInfo& w : windowInfos_) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("id"), w.id);
+        entry.insert(QStringLiteral("title"), QString::fromStdString(w.title));
+        entry.insert(QStringLiteral("application"), QString::fromStdString(w.application));
+        entry.insert(QStringLiteral("width"), w.width);
+        entry.insert(QStringLiteral("height"), w.height);
+        windowList_.append(entry);
+    }
+    Q_EMIT windowsChanged();
+}
+
+void AppController::pickWindow(int windowId) {
+    for (const WindowInfo& w : windowInfos_) {
+        if (w.id == windowId) {
+            config_.video.mode = CaptureMode::Window;
+            config_.video.windowId = windowId;
+            config_.video.width = w.width;
+            config_.video.height = w.height;
+            config_.video.region = Region{};
+            Q_EMIT windowsChanged();
+            return;
+        }
+    }
 }
 
 void AppController::setFps(int fps) {

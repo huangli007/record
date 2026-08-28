@@ -115,6 +115,19 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Dynamic-size path: encode a few frames at a different resolution to
+    // exercise the hardware scale path (window resize / resolution change).
+    const int resizeFrames = 5;
+    for (int i = 0; i < resizeFrames; ++i) {
+        CVPixelBufferRef pb = makeTestBuffer(480, 270, i);
+        VideoFrame frame(pb);
+        frame.ptsUs = static_cast<int64_t>(totalFrames + i) * 1'000'000 / fps;
+        frame.width = 480;
+        frame.height = 270;
+        videoEncoder.encode(std::move(frame));
+        CVPixelBufferRelease(pb);
+    }
+
     // 3 seconds of 440 Hz sine, stereo Float32 interleaved, 1024-sample chunks.
     constexpr int sampleRate = 48000;
     constexpr int chunk = 1024;
@@ -147,7 +160,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "output file missing or empty\n");
         return 1;
     }
-    std::printf("OK: %s (%zu bytes, %d video frames, %d audio chunks)\n",
-                outPath.c_str(), static_cast<size_t>(size), totalFrames, totalChunks);
+    std::printf("OK: %s (%zu bytes, %d video frames (+%d resized), %d audio chunks)\n",
+                outPath.c_str(), static_cast<size_t>(size),
+                totalFrames, resizeFrames, totalChunks);
     return 0;
 }

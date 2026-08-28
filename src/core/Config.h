@@ -8,6 +8,7 @@ namespace nr {
 enum class CaptureMode {
     FullScreen,
     Region,
+    Window,
 };
 
 enum class BitrateMode {
@@ -33,6 +34,7 @@ struct Region {
 struct VideoConfig {
     CaptureMode mode = CaptureMode::FullScreen;
     Region region;
+    int windowId = 0;           // SCWindow.windowID when mode == Window
     int width = 1920;
     int height = 1080;
     int fps = 60;              // 24 / 30 / 60 / 120, 0 = auto (display refresh)

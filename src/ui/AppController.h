@@ -3,13 +3,17 @@
 #include <QObject>
 #include <QString>
 #include <QTimer>
+#include <QVariantList>
 
 #include <memory>
+#include <vector>
 
 #include "core/Config.h"
 #include "core/RecordingSession.h"
 
 namespace nr {
+
+struct WindowInfo;
 
 // Bridges the recording core to QML. Owns the session and exposes the current
 // configuration as invokables so the Notion-style UI stays declarative.
@@ -24,6 +28,7 @@ class AppController : public QObject {
     Q_PROPERTY(int outputQueueDepth READ outputQueueDepth NOTIFY statsChanged)
     Q_PROPERTY(int cpuPercent READ cpuPercent NOTIFY statsChanged)
     Q_PROPERTY(bool highLoad READ highLoad NOTIFY statsChanged)
+    Q_PROPERTY(QVariantList windowList READ windowList NOTIFY windowsChanged)
     Q_PROPERTY(QString lastFilePath READ lastFilePath NOTIFY sessionFinished)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY stateChanged)
 
@@ -40,6 +45,7 @@ public:
     int outputQueueDepth() const;
     int cpuPercent() const;
     bool highLoad() const;
+    QVariantList windowList() const;
     QString lastFilePath() const;
     QString errorMessage() const;
 
@@ -47,6 +53,8 @@ public:
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void setRegion(int x, int y, int width, int height);
     Q_INVOKABLE void setCaptureMode(int mode);  // 0 = full screen, 1 = region
+    Q_INVOKABLE void refreshWindows();
+    Q_INVOKABLE void pickWindow(int windowId);
     Q_INVOKABLE void setFps(int fps);           // 0 = auto
     Q_INVOKABLE void setCaptureCursor(bool enabled);
     Q_INVOKABLE void setClickEffects(bool enabled);
@@ -68,6 +76,7 @@ Q_SIGNALS:
     void stateChanged();
     void elapsedChanged();
     void statsChanged();
+    void windowsChanged();
     void sessionFinished(const QString& path);
     void recordingFailed(const QString& message);
 
@@ -94,6 +103,8 @@ private:
     long long lastSystemTicks_ = 0;
     long long lastIdleTicks_ = 0;
     int cpuPercent_ = 0;
+    std::vector<struct WindowInfo> windowInfos_;
+    QVariantList windowList_;
 };
 
 } // namespace nr

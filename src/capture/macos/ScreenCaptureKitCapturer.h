@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include "capture/ScreenCapturer.h"
 
@@ -19,6 +20,9 @@ public:
     void stop() override;
     void setPaused(bool paused) override;
     void setSystemAudioCallback(AudioFrameCallback onAudio) override;
+
+    // Lists capture-eligible windows (requires screen recording permission).
+    static std::vector<WindowInfo> listWindows();
 
 private:
 public:
