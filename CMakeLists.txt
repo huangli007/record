@@ -118,6 +118,7 @@ qt_add_qml_module(NotionRecorder
         src/ui/qml/FloatingBar.qml
         src/ui/qml/SettingsDialog.qml
         src/ui/qml/RegionSelector.qml
+        src/ui/qml/AnnotationOverlay.qml
 )
 
 # Deploy the QML module into the app bundle (qmldir + sources) and finalize

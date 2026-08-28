@@ -229,6 +229,10 @@ bool AppController::denoise() const {
     return config_.audio.denoise;
 }
 
+bool AppController::annotationMode() const {
+    return config_.video.annotationMode;
+}
+
 QString AppController::outputDir() const {
     return QString::fromStdString(config_.general.outputDir);
 }
@@ -469,6 +473,12 @@ void AppController::setDenoise(bool enabled) {
     saveSettings();
 }
 
+void AppController::toggleAnnotationMode() {
+    config_.video.annotationMode = !config_.video.annotationMode;
+    saveSettings();
+    Q_EMIT annotationModeChanged();
+}
+
 void AppController::setOutputDir(const QString& dir) {
     config_.general.outputDir = dir.toStdString();
     saveSettings();
@@ -524,6 +534,9 @@ void AppController::loadSettings() {
     config_.video.bitrateKbps =
         s.value(QStringLiteral("video/bitrateKbps"), config_.video.bitrateKbps).toInt();
     config_.video.crf = s.value(QStringLiteral("video/crf"), config_.video.crf).toInt();
+    config_.video.annotationMode =
+        s.value(QStringLiteral("video/annotationMode"), config_.video.annotationMode)
+            .toBool();
 
     config_.audio.captureSystemAudio =
         s.value(QStringLiteral("audio/captureSystemAudio"),
@@ -563,6 +576,7 @@ void AppController::saveSettings() {
                static_cast<int>(config_.video.bitrateMode));
     s.setValue(QStringLiteral("video/bitrateKbps"), config_.video.bitrateKbps);
     s.setValue(QStringLiteral("video/crf"), config_.video.crf);
+    s.setValue(QStringLiteral("video/annotationMode"), config_.video.annotationMode);
 
     s.setValue(QStringLiteral("audio/captureSystemAudio"),
                config_.audio.captureSystemAudio);

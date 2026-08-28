@@ -17,6 +17,11 @@ Window {
         id: regionSelector
     }
 
+    AnnotationOverlay {
+        id: annotationOverlay
+        visible: app.recording && app.annotationMode
+    }
+
     FloatingBar {
         anchors.fill: parent
         anchors.margins: 10

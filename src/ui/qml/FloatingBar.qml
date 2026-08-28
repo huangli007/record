@@ -229,6 +229,30 @@ Item {
                 onClicked: app.openOutputFolder()
             }
         }
+
+        // Annotation toggle (visible while recording)
+        Rectangle {
+            id: annotationButton
+            anchors.verticalCenter: parent.verticalCenter
+            width: 30
+            height: 30
+            radius: 5
+            visible: app.recording
+            color: app.annotationMode ? "#EFEEEA" : "transparent"
+
+            Text {
+                anchors.centerIn: parent
+                text: "✎"
+                font.pixelSize: 16
+                color: app.annotationMode ? "#EB5757" : "#37352F"
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: app.toggleAnnotationMode()
+            }
+        }
     }
 
     // Tiny CPU load indicator while recording (PRD performance monitoring).

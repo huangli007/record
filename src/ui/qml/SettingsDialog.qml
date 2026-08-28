@@ -311,6 +311,19 @@ Window {
                     onToggled: (value) => app.setClickEffects(value)
                 }
 
+                SwitchRow {
+                    id: annotationSwitch
+                    label: "实时标注"
+                    checked: app.annotationMode
+                    onToggled: (value) => app.toggleAnnotationMode()
+                    Connections {
+                        target: app
+                        function onSettingsChanged() {
+                            checked = app.annotationMode
+                        }
+                    }
+                }
+
                 SectionTitle { text: "编码器" }
                 ComboBox {
                     id: codecCombo
@@ -474,6 +487,7 @@ Window {
             fpsCombo.currentIndex = [0, 24, 30, 60, 120].indexOf(app.fps)
             cursorSwitch.checked = app.captureCursor
             clickSwitch.checked = app.clickEffects
+            annotationSwitch.checked = app.annotationMode
             codecCombo.currentIndex = ["auto", "h264", "h265"].indexOf(app.codec)
             bitrateModeCombo.currentIndex = app.bitrateMode
             bitrateSlider.value = app.bitrateKbps

@@ -44,6 +44,7 @@ class AppController : public QObject {
     Q_PROPERTY(int systemVolume READ systemVolume NOTIFY settingsChanged)
     Q_PROPERTY(int micVolume READ micVolume NOTIFY settingsChanged)
     Q_PROPERTY(bool denoise READ denoise NOTIFY settingsChanged)
+    Q_PROPERTY(bool annotationMode READ annotationMode NOTIFY annotationModeChanged)
     Q_PROPERTY(QString outputDir READ outputDir NOTIFY settingsChanged)
     Q_PROPERTY(int formatIndex READ formatIndex NOTIFY settingsChanged)
 
@@ -76,6 +77,7 @@ public:
     int systemVolume() const;
     int micVolume() const;
     bool denoise() const;
+    bool annotationMode() const;
     QString outputDir() const;
     int formatIndex() const;
 
@@ -101,6 +103,7 @@ public:
     Q_INVOKABLE void setFormat(const QString& format);
     Q_INVOKABLE void openOutputFolder();
     Q_INVOKABLE void revealLastFile();
+    Q_INVOKABLE void toggleAnnotationMode();
 
 Q_SIGNALS:
     void stateChanged();
@@ -108,6 +111,7 @@ Q_SIGNALS:
     void statsChanged();
     void windowsChanged();
     void settingsChanged();
+    void annotationModeChanged();
     void sessionFinished(const QString& path);
     void recordingFailed(const QString& message);
 

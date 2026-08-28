@@ -10,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 #include "capture/AudioFrame.h"
 #include "capture/VideoFrame.h"
@@ -384,7 +385,22 @@ bool ScreenCaptureKitCapturer::startStream() {
     if (targetWindow) {
         filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:targetWindow];
     } else {
-        filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+        // Exclude our own UI (floating bar, settings, toasts) from the
+        // recording, but keep the annotation overlay (identified by title)
+        // so annotations drawn on screen are captured.
+        NSMutableArray<SCWindow*>* exclude = [NSMutableArray array];
+        const pid_t selfPid = getpid();
+        for (SCWindow* w in content.windows) {
+            if (w.owningApplication.processID != selfPid) {
+                continue;
+            }
+            if ([w.title isEqualToString:@"NotionRecorder-Annotation"]) {
+                continue;
+            }
+            [exclude addObject:w];
+        }
+        filter = [[SCContentFilter alloc] initWithDisplay:display
+                                         excludingWindows:exclude];
     }
     if (!filter) {
         return false;

@@ -45,6 +45,7 @@ struct VideoConfig {
     int bitrateKbps = 6000;    // CBR/VBR target
     int crf = 18;              // quality-first mode
     std::string preset = "medium";
+    bool annotationMode = false;  // on-screen annotation overlay while recording
 };
 
 struct AudioConfig {
