@@ -5,7 +5,9 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <functional>
+#include <mutex>
 #include <vector>
 
 #include "capture/AudioFrame.h"
@@ -17,11 +19,121 @@ struct CoreAudioCapturer::Impl {
     AudioComponentInstance unit = nullptr;
     AudioFrameCallback onFrame;
     std::atomic<bool> paused{false};
+    std::atomic<bool> started{false};
     std::atomic<float> volume{1.0f};
     std::atomic<int> sampleRate{48000};
     std::atomic<int> channels{2};
     std::atomic<int64_t> frameCounter{0};
-    bool started = false;
+    AudioConfig config;
+    std::mutex restartMutex;
+    dispatch_queue_t restartQueue = nullptr;
+    bool listenerRegistered = false;
+
+    static OSStatus deviceChangedListener(AudioObjectID /*inObjectID*/,
+                                          UInt32 /*inNumberAddresses*/,
+                                          const AudioObjectPropertyAddress /*inAddresses*/[],
+                                          void* inClientData);
+
+    bool startUnit() {
+        AudioComponentDescription desc{};
+        desc.componentType = kAudioUnitType_Output;
+        desc.componentSubType = kAudioUnitSubType_HALOutput;
+        desc.componentManufacturer = kAudioUnitManufacturer_Apple;
+        AudioComponent comp = AudioComponentFindNext(nullptr, &desc);
+        if (!comp) {
+            return false;
+        }
+        OSStatus status = AudioComponentInstanceNew(comp, &unit);
+        if (status != noErr) {
+            return false;
+        }
+
+        UInt32 one = 1;
+        UInt32 zero = 0;
+        AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
+                             kAudioUnitScope_Output, 0, &zero, sizeof(zero));
+        AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
+                             kAudioUnitScope_Input, 1, &one, sizeof(one));
+
+        AudioDeviceID inputDevice = kAudioObjectUnknown;
+        UInt32 size = sizeof(inputDevice);
+        AudioObjectPropertyAddress addr = {
+            kAudioHardwarePropertyDefaultInputDevice,
+            kAudioObjectPropertyScopeGlobal,
+            kAudioObjectPropertyElementMain};
+        if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, nullptr,
+                                       &size, &inputDevice) != noErr ||
+            inputDevice == kAudioObjectUnknown) {
+            AudioComponentInstanceDispose(unit);
+            unit = nullptr;
+            return false;
+        }
+        AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                             kAudioUnitScope_Global, 0, &inputDevice, sizeof(inputDevice));
+
+        const int sampleRate = config.sampleRate > 0 ? config.sampleRate : 48000;
+        const int channels = config.channels > 0 ? config.channels : 2;
+        AudioStreamBasicDescription fmt{};
+        fmt.mSampleRate = sampleRate;
+        fmt.mFormatID = kAudioFormatLinearPCM;
+        fmt.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+        fmt.mChannelsPerFrame = channels;
+        fmt.mBitsPerChannel = 32;
+        fmt.mBytesPerFrame = channels * sizeof(float);
+        fmt.mBytesPerPacket = fmt.mBytesPerFrame;
+        fmt.mFramesPerPacket = 1;
+        AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat,
+                             kAudioUnitScope_Input, 0, &fmt, sizeof(fmt));
+
+        AURenderCallbackStruct callback{};
+        callback.inputProc = &Impl::render;
+        callback.inputProcRefCon = this;
+        AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback,
+                             kAudioUnitScope_Input, 0, &callback, sizeof(callback));
+
+        status = AudioUnitInitialize(unit);
+        if (status != noErr) {
+            stopUnit();
+            return false;
+        }
+        status = AudioOutputUnitStart(unit);
+        if (status != noErr) {
+            stopUnit();
+            return false;
+        }
+        return true;
+    }
+
+    void stopUnit() {
+        if (unit) {
+            AudioOutputUnitStop(unit);
+            AudioUnitUninitialize(unit);
+            AudioComponentInstanceDispose(unit);
+            unit = nullptr;
+        }
+    }
+
+    void handleDeviceChanged() {
+        if (!started.load()) {
+            return;
+        }
+        if (!restartQueue) {
+            return;
+        }
+        dispatch_async(restartQueue, ^{
+            std::lock_guard<std::mutex> lock(restartMutex);
+            if (!started.load()) {
+                return;
+            }
+            stopUnit();
+            if (!startUnit()) {
+                // No default input device right now; the next change
+                // notification will retry.
+                std::fprintf(stderr,
+                             "[CoreAudioCapturer] 默认输入设备不可用，等待恢复\n");
+            }
+        });
+    }
 
     static OSStatus render(void* inRefCon,
                            AudioUnitRenderActionFlags* ioActionFlags,
@@ -71,6 +183,17 @@ struct CoreAudioCapturer::Impl {
     }
 };
 
+// Called on CoreAudio's property-listener thread when the default input
+// device changes (device plugged/unplugged). Rebuilds the capture unit.
+OSStatus CoreAudioCapturer::Impl::deviceChangedListener(
+    AudioObjectID, UInt32, const AudioObjectPropertyAddress[], void* inClientData) {
+    auto* impl = static_cast<CoreAudioCapturer::Impl*>(inClientData);
+    if (impl) {
+        impl->handleDeviceChanged();
+    }
+    return noErr;
+}
+
 CoreAudioCapturer::CoreAudioCapturer() : impl_(std::make_unique<Impl>()) {}
 
 CoreAudioCapturer::~CoreAudioCapturer() {
@@ -83,6 +206,7 @@ bool CoreAudioCapturer::start(const AudioConfig& config, AudioFrameCallback onFr
     }
     stop();
 
+    impl_->config = config;
     const int sampleRate = config.sampleRate > 0 ? config.sampleRate : 48000;
     const int channels = config.channels > 0 ? config.channels : 2;
     impl_->sampleRate.store(sampleRate);
@@ -92,78 +216,30 @@ bool CoreAudioCapturer::start(const AudioConfig& config, AudioFrameCallback onFr
     impl_->frameCounter.store(0);
     impl_->onFrame = std::move(onFrame);
 
-    AudioComponentDescription desc{};
-    desc.componentType = kAudioUnitType_Output;
-    desc.componentSubType = kAudioUnitSubType_HALOutput;
-    desc.componentManufacturer = kAudioUnitManufacturer_Apple;
-    AudioComponent comp = AudioComponentFindNext(nullptr, &desc);
-    if (!comp) {
-        return false;
-    }
-    OSStatus status = AudioComponentInstanceNew(comp, &impl_->unit);
-    if (status != noErr) {
-        return false;
+    if (!impl_->restartQueue) {
+        impl_->restartQueue =
+            dispatch_queue_create("com.notionrecorder.coreaudio", DISPATCH_QUEUE_SERIAL);
     }
 
-    // Disable output element so we only capture the microphone input.
-    UInt32 one = 1;
-    UInt32 zero = 0;
-    AudioUnitSetProperty(impl_->unit, kAudioOutputUnitProperty_EnableIO,
-                         kAudioUnitScope_Output, 0, &zero, sizeof(zero));
-    AudioUnitSetProperty(impl_->unit, kAudioOutputUnitProperty_EnableIO,
-                         kAudioUnitScope_Input, 1, &one, sizeof(one));
+    if (!impl_->startUnit()) {
+        impl_->stopUnit();
+        impl_->onFrame = nullptr;
+        return false;
+    }
+    impl_->started.store(true);
 
-    // Default input device.
-    AudioDeviceID inputDevice = kAudioObjectUnknown;
-    UInt32 size = sizeof(inputDevice);
+    // Watch for default input device changes (headset plug/unplug, etc.).
     AudioObjectPropertyAddress addr = {
         kAudioHardwarePropertyDefaultInputDevice,
         kAudioObjectPropertyScopeGlobal,
         kAudioObjectPropertyElementMain};
-    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, nullptr,
-                                   &size, &inputDevice) != noErr ||
-        inputDevice == kAudioObjectUnknown) {
-        AudioComponentInstanceDispose(impl_->unit);
-        impl_->unit = nullptr;
-        return false;
+    if (!impl_->listenerRegistered) {
+        const OSStatus listenerStatus = AudioObjectAddPropertyListener(
+            kAudioObjectSystemObject, &addr,
+            &CoreAudioCapturer::Impl::deviceChangedListener,
+            impl_.get());
+        impl_->listenerRegistered = listenerStatus == noErr;
     }
-    AudioUnitSetProperty(impl_->unit, kAudioOutputUnitProperty_CurrentDevice,
-                         kAudioUnitScope_Global, 0, &inputDevice, sizeof(inputDevice));
-
-    // Client format: interleaved Float32.
-    AudioStreamBasicDescription fmt{};
-    fmt.mSampleRate = sampleRate;
-    fmt.mFormatID = kAudioFormatLinearPCM;
-    fmt.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
-    fmt.mChannelsPerFrame = channels;
-    fmt.mBitsPerChannel = 32;
-    fmt.mBytesPerFrame = channels * sizeof(float);
-    fmt.mBytesPerPacket = fmt.mBytesPerFrame;
-    fmt.mFramesPerPacket = 1;
-    AudioUnitSetProperty(impl_->unit, kAudioUnitProperty_StreamFormat,
-                         kAudioUnitScope_Input, 0, &fmt, sizeof(fmt));
-
-    AURenderCallbackStruct callback{};
-    callback.inputProc = &Impl::render;
-    callback.inputProcRefCon = impl_.get();
-    AudioUnitSetProperty(impl_->unit, kAudioUnitProperty_SetRenderCallback,
-                         kAudioUnitScope_Input, 0, &callback, sizeof(callback));
-
-    status = AudioUnitInitialize(impl_->unit);
-    if (status != noErr) {
-        AudioComponentInstanceDispose(impl_->unit);
-        impl_->unit = nullptr;
-        return false;
-    }
-
-    status = AudioOutputUnitStart(impl_->unit);
-    if (status != noErr) {
-        AudioUnitUninitialize(impl_->unit);
-        AudioComponentInstanceDispose(impl_->unit);
-        impl_->unit = nullptr;
-        return false;
-    }
-    impl_->started = true;
     return true;
 }
 
@@ -171,13 +247,18 @@ void CoreAudioCapturer::stop() {
     if (!impl_) {
         return;
     }
-    if (impl_->unit) {
-        AudioOutputUnitStop(impl_->unit);
-        AudioUnitUninitialize(impl_->unit);
-        AudioComponentInstanceDispose(impl_->unit);
-        impl_->unit = nullptr;
+    impl_->started.store(false);
+    if (impl_->listenerRegistered) {
+        AudioObjectPropertyAddress addr = {
+            kAudioHardwarePropertyDefaultInputDevice,
+            kAudioObjectPropertyScopeGlobal,
+            kAudioObjectPropertyElementMain};
+        AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &addr,
+                                          &CoreAudioCapturer::Impl::deviceChangedListener,
+                                          impl_.get());
+        impl_->listenerRegistered = false;
     }
-    impl_->started = false;
+    impl_->stopUnit();
     impl_->onFrame = nullptr;
 }
 

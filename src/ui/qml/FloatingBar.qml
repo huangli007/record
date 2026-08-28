@@ -237,9 +237,21 @@ Item {
         anchors.leftMargin: 20
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 2
-        text: "CPU " + app.cpuPercent + "%"
+        text: app.highLoad
+              ? "CPU " + app.cpuPercent + "% · 点击降至 30FPS"
+              : "CPU " + app.cpuPercent + "%"
         color: app.highLoad ? "#EB5757" : "#D3D1CA"
         font.pixelSize: 9
         visible: app.recording
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: app.highLoad ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: {
+                if (app.highLoad) {
+                    app.setFps(30)
+                }
+            }
+        }
     }
 }

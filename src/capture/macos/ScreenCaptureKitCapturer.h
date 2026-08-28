@@ -23,8 +23,15 @@ public:
 
     // Lists capture-eligible windows (requires screen recording permission).
     static std::vector<WindowInfo> listWindows();
+    // Backing scale factor of the main display (for Retina-aware region size).
+    static double displayScale();
 
 private:
+    bool startStream();
+    void restartStream();
+    void registerObservers();
+    void unregisterObservers();
+
 public:
     // Exposed for the Objective-C++ delegate (same translation unit).
     struct Impl;

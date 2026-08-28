@@ -74,8 +74,10 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
 
 #if defined(__APPLE__)
     if (config_.video.mode == CaptureMode::Region && config_.video.region.valid()) {
-        config_.video.width = config_.video.region.width;
-        config_.video.height = config_.video.region.height;
+        // Region is expressed in points; encode at Retina pixel resolution.
+        const double scale = ScreenCaptureKitCapturer::displayScale();
+        config_.video.width = static_cast<int>(config_.video.region.width * scale);
+        config_.video.height = static_cast<int>(config_.video.region.height * scale);
     } else if (config_.video.mode == CaptureMode::FullScreen) {
         const CGRect bounds = CGDisplayBounds(CGMainDisplayID());
         config_.video.width = static_cast<int>(bounds.size.width);

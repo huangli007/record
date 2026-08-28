@@ -136,6 +136,9 @@ struct ScreenCaptureKitCapturer::Impl {
 
     VideoFrameCallback onVideo;
     AudioFrameCallback onAudio;
+    VideoConfig videoConfig;
+    AudioConfig audioConfig;
+    ScreenCaptureKitCapturer* owner = nullptr;
 
     std::atomic<bool> paused{false};
     std::atomic<bool> stopped{false};
@@ -144,6 +147,10 @@ struct ScreenCaptureKitCapturer::Impl {
     std::atomic<int64_t> videoBaseUs{0};
     std::atomic<int64_t> audioBaseUs{0};
     std::mutex errorMutex;
+    std::mutex restartMutex;
+    dispatch_queue_t restartQueue = nullptr;
+    id wakeObserver = nil;
+    id contentObserver = nil;
     std::string lastError;
 
     bool isPaused() const { return paused.load(); }
@@ -158,6 +165,15 @@ struct ScreenCaptureKitCapturer::Impl {
         if (message) {
             lastError = message;
         }
+    }
+
+    void handleSystemChange() {
+        if (stopped.load() || !owner || !restartQueue) {
+            return;
+        }
+        dispatch_async(restartQueue, ^{
+            owner->restartStream();
+        });
     }
 
     void emitVideo(VideoFrame frame) {
@@ -252,6 +268,30 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
     }
     stop();
 
+    impl_->videoConfig = videoConfig;
+    impl_->audioConfig = audioConfig;
+    impl_->owner = this;
+    impl_->onVideo = std::move(onFrame);
+    impl_->stopped.store(false);
+    if (!impl_->restartQueue) {
+        impl_->restartQueue =
+            dispatch_queue_create("com.notionrecorder.sck.restart",
+                                  DISPATCH_QUEUE_SERIAL);
+    }
+    if (!startStream()) {
+        return false;
+    }
+    registerObservers();
+    return true;
+}
+
+bool ScreenCaptureKitCapturer::startStream() {
+    if (!impl_) {
+        return false;
+    }
+    const VideoConfig& videoConfig = impl_->videoConfig;
+    const AudioConfig& audioConfig = impl_->audioConfig;
+
     SCShareableContent* content = fetchShareableContentSync();
     if (!content || content.displays.count == 0) {
         return false;
@@ -314,8 +354,11 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
                                          videoConfig.region.y,
                                          videoConfig.region.width,
                                          videoConfig.region.height);
-        scConfig.width = static_cast<size_t>(videoConfig.region.width);
-        scConfig.height = static_cast<size_t>(videoConfig.region.height);
+        // sourceRect is in points; the output size is in pixels, so scale by
+        // the display's backing scale factor for crisp Retina captures.
+        const double scale = display.width / display.frame.size.width;
+        scConfig.width = static_cast<size_t>(videoConfig.region.width * scale);
+        scConfig.height = static_cast<size_t>(videoConfig.region.height * scale);
     } else if (targetWindow) {
         // Capture the window at its current pixel size; the encoder scales
         // dynamically if the window is resized while recording.
@@ -334,12 +377,8 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
         scConfig.height = display.height;
     }
 
-    impl_->onVideo = std::move(onFrame);
     impl_->systemVolume.store(audioConfig.systemVolume);
     impl_->paused.store(false);
-    impl_->stopped.store(false);
-    impl_->videoBaseUs.store(0);
-    impl_->audioBaseUs.store(0);
 
     SCContentFilter* filter = nil;
     if (targetWindow) {
@@ -395,6 +434,63 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
     return true;
 }
 
+void ScreenCaptureKitCapturer::restartStream() {
+    if (!impl_ || impl_->stopped.load()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(impl_->restartMutex);
+    if (impl_->stream) {
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+        [impl_->stream stopCaptureWithCompletionHandler:^(NSError*) {
+            dispatch_semaphore_signal(sem);
+        }];
+        dispatch_semaphore_wait(sem,
+                                dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC));
+        impl_->stream = nil;
+        impl_->delegate = nil;
+        impl_->queue = nullptr;
+    }
+    if (!startStream()) {
+        impl_->markStopped("屏幕内容变化后自动恢复失败");
+    }
+}
+
+void ScreenCaptureKitCapturer::registerObservers() {
+    if (!impl_ || impl_->wakeObserver || impl_->contentObserver) {
+        return;
+    }
+    NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+    impl_->wakeObserver = [center
+        addObserverForName:NSWorkspaceDidWakeNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(NSNotification*) {
+                    impl_->handleSystemChange();
+                }];
+    impl_->contentObserver = [center
+        addObserverForName:NSApplicationDidChangeScreenParametersNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(NSNotification*) {
+                    impl_->handleSystemChange();
+                }];
+}
+
+void ScreenCaptureKitCapturer::unregisterObservers() {
+    if (!impl_) {
+        return;
+    }
+    NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+    if (impl_->wakeObserver) {
+        [center removeObserver:impl_->wakeObserver];
+        impl_->wakeObserver = nil;
+    }
+    if (impl_->contentObserver) {
+        [center removeObserver:impl_->contentObserver];
+        impl_->contentObserver = nil;
+    }
+}
+
 std::vector<WindowInfo> ScreenCaptureKitCapturer::listWindows() {
     std::vector<WindowInfo> result;
     SCShareableContent* content = fetchShareableContentSync();
@@ -423,10 +519,21 @@ std::vector<WindowInfo> ScreenCaptureKitCapturer::listWindows() {
     return result;
 }
 
+double ScreenCaptureKitCapturer::displayScale() {
+    NSScreen* screen = NSScreen.mainScreen;
+    return screen ? screen.backingScaleFactor : 1.0;
+}
+
 void ScreenCaptureKitCapturer::stop() {
     if (!impl_ || !impl_->stream) {
+        unregisterObservers();
+        impl_->owner = nullptr;
+        impl_->onVideo = nullptr;
+        impl_->onAudio = nullptr;
+        impl_->stopped.store(true);
         return;
     }
+    unregisterObservers();
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     [impl_->stream stopCaptureWithCompletionHandler:^(NSError*) {
         dispatch_semaphore_signal(sem);
@@ -437,6 +544,8 @@ void ScreenCaptureKitCapturer::stop() {
     impl_->queue = nullptr;
     impl_->onVideo = nullptr;
     impl_->onAudio = nullptr;
+    impl_->owner = nullptr;
+    impl_->stopped.store(true);
 }
 
 void ScreenCaptureKitCapturer::setPaused(bool paused) {

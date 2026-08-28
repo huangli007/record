@@ -86,6 +86,8 @@ private:
     void stopRecording();
     void refreshStats();
     void setupHotkeys();
+    void loadSettings();
+    void saveSettings();
 
     RecordingConfig config_;
     std::unique_ptr<RecordingSession> session_;

@@ -2,6 +2,7 @@
 
 #include <QDesktopServices>
 #include <QFileInfo>
+#include <QSettings>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -84,6 +85,7 @@ bool readCpuTicks(long long& user, long long& system, long long& idle) {
 
 AppController::AppController(QObject* parent)
     : QObject(parent), config_(RecordingConfig::defaults()) {
+    loadSettings();
     connect(&statsTimer_, &QTimer::timeout, this, &AppController::refreshStats);
     statsTimer_.setInterval(250);
 #if defined(__APPLE__)
@@ -293,6 +295,7 @@ void AppController::setRegion(int x, int y, int width, int height) {
     config_.video.region = Region{x, y, width, height};
     config_.video.width = width;
     config_.video.height = height;
+    saveSettings();
 }
 
 void AppController::setCaptureMode(int mode) {
@@ -306,6 +309,7 @@ void AppController::setCaptureMode(int mode) {
     if (mode != 2) {
         config_.video.windowId = 0;
     }
+    saveSettings();
 }
 
 void AppController::refreshWindows() {
@@ -331,6 +335,7 @@ void AppController::pickWindow(int windowId) {
             config_.video.width = w.width;
             config_.video.height = w.height;
             config_.video.region = Region{};
+            saveSettings();
             Q_EMIT windowsChanged();
             return;
         }
@@ -339,58 +344,166 @@ void AppController::pickWindow(int windowId) {
 
 void AppController::setFps(int fps) {
     config_.video.fps = fps;
+    saveSettings();
 }
 
 void AppController::setCaptureCursor(bool enabled) {
     config_.video.captureCursor = enabled;
+    saveSettings();
 }
 
 void AppController::setClickEffects(bool enabled) {
     config_.video.clickEffects = enabled;
+    saveSettings();
 }
 
 void AppController::setCodec(const QString& codec) {
     config_.video.codec = codec.toStdString();
+    saveSettings();
 }
 
 void AppController::setBitrateMode(int mode) {
     config_.video.bitrateMode = mode == 0 ? BitrateMode::Quality : BitrateMode::FileSize;
+    saveSettings();
 }
 
 void AppController::setBitrateKbps(int kbps) {
     config_.video.bitrateKbps = kbps;
+    saveSettings();
 }
 
 void AppController::setCrf(int crf) {
     config_.video.crf = crf;
+    saveSettings();
 }
 
 void AppController::setSystemAudio(bool enabled) {
     config_.audio.captureSystemAudio = enabled;
+    saveSettings();
 }
 
 void AppController::setMicrophone(bool enabled) {
     config_.audio.captureMicrophone = enabled;
+    saveSettings();
 }
 
 void AppController::setSystemVolume(int volume) {
     config_.audio.systemVolume = volume;
+    saveSettings();
 }
 
 void AppController::setMicVolume(int volume) {
     config_.audio.micVolume = volume;
+    saveSettings();
 }
 
 void AppController::setDenoise(bool enabled) {
     config_.audio.denoise = enabled;
+    saveSettings();
 }
 
 void AppController::setOutputDir(const QString& dir) {
     config_.general.outputDir = dir.toStdString();
+    saveSettings();
 }
 
 void AppController::setFormat(const QString& format) {
     config_.general.format = format.toLower() == "mkv" ? "mkv" : "mp4";
+    saveSettings();
+}
+
+void AppController::loadSettings() {
+    QSettings s(QStringLiteral("NotionRecorder"), QStringLiteral("NotionRecorder"));
+    config_.general.outputDir =
+        s.value(QStringLiteral("general/outputDir"),
+                QString::fromStdString(config_.general.outputDir))
+            .toString()
+            .toStdString();
+    config_.general.format =
+        s.value(QStringLiteral("general/format"),
+                QString::fromStdString(config_.general.format))
+            .toString()
+            .toStdString();
+
+    config_.video.mode =
+        static_cast<CaptureMode>(s.value(QStringLiteral("video/mode"),
+                                         static_cast<int>(config_.video.mode))
+                                     .toInt());
+    config_.video.windowId =
+        s.value(QStringLiteral("video/windowId"), config_.video.windowId).toInt();
+    config_.video.region.x =
+        s.value(QStringLiteral("video/regionX"), config_.video.region.x).toInt();
+    config_.video.region.y =
+        s.value(QStringLiteral("video/regionY"), config_.video.region.y).toInt();
+    config_.video.region.width =
+        s.value(QStringLiteral("video/regionWidth"), config_.video.region.width).toInt();
+    config_.video.region.height =
+        s.value(QStringLiteral("video/regionHeight"), config_.video.region.height).toInt();
+    config_.video.fps =
+        s.value(QStringLiteral("video/fps"), config_.video.fps).toInt();
+    config_.video.captureCursor =
+        s.value(QStringLiteral("video/captureCursor"), config_.video.captureCursor).toBool();
+    config_.video.clickEffects =
+        s.value(QStringLiteral("video/clickEffects"), config_.video.clickEffects).toBool();
+    config_.video.codec =
+        s.value(QStringLiteral("video/codec"),
+                QString::fromStdString(config_.video.codec))
+            .toString()
+            .toStdString();
+    config_.video.bitrateMode =
+        static_cast<BitrateMode>(s.value(QStringLiteral("video/bitrateMode"),
+                                         static_cast<int>(config_.video.bitrateMode))
+                                     .toInt());
+    config_.video.bitrateKbps =
+        s.value(QStringLiteral("video/bitrateKbps"), config_.video.bitrateKbps).toInt();
+    config_.video.crf = s.value(QStringLiteral("video/crf"), config_.video.crf).toInt();
+
+    config_.audio.captureSystemAudio =
+        s.value(QStringLiteral("audio/captureSystemAudio"),
+                config_.audio.captureSystemAudio)
+            .toBool();
+    config_.audio.captureMicrophone =
+        s.value(QStringLiteral("audio/captureMicrophone"),
+                config_.audio.captureMicrophone)
+            .toBool();
+    config_.audio.systemVolume =
+        s.value(QStringLiteral("audio/systemVolume"), config_.audio.systemVolume).toInt();
+    config_.audio.micVolume =
+        s.value(QStringLiteral("audio/micVolume"), config_.audio.micVolume).toInt();
+    config_.audio.denoise =
+        s.value(QStringLiteral("audio/denoise"), config_.audio.denoise).toBool();
+}
+
+void AppController::saveSettings() {
+    QSettings s(QStringLiteral("NotionRecorder"), QStringLiteral("NotionRecorder"));
+    s.setValue(QStringLiteral("general/outputDir"),
+               QString::fromStdString(config_.general.outputDir));
+    s.setValue(QStringLiteral("general/format"),
+               QString::fromStdString(config_.general.format));
+
+    s.setValue(QStringLiteral("video/mode"), static_cast<int>(config_.video.mode));
+    s.setValue(QStringLiteral("video/windowId"), config_.video.windowId);
+    s.setValue(QStringLiteral("video/regionX"), config_.video.region.x);
+    s.setValue(QStringLiteral("video/regionY"), config_.video.region.y);
+    s.setValue(QStringLiteral("video/regionWidth"), config_.video.region.width);
+    s.setValue(QStringLiteral("video/regionHeight"), config_.video.region.height);
+    s.setValue(QStringLiteral("video/fps"), config_.video.fps);
+    s.setValue(QStringLiteral("video/captureCursor"), config_.video.captureCursor);
+    s.setValue(QStringLiteral("video/clickEffects"), config_.video.clickEffects);
+    s.setValue(QStringLiteral("video/codec"),
+               QString::fromStdString(config_.video.codec));
+    s.setValue(QStringLiteral("video/bitrateMode"),
+               static_cast<int>(config_.video.bitrateMode));
+    s.setValue(QStringLiteral("video/bitrateKbps"), config_.video.bitrateKbps);
+    s.setValue(QStringLiteral("video/crf"), config_.video.crf);
+
+    s.setValue(QStringLiteral("audio/captureSystemAudio"),
+               config_.audio.captureSystemAudio);
+    s.setValue(QStringLiteral("audio/captureMicrophone"),
+               config_.audio.captureMicrophone);
+    s.setValue(QStringLiteral("audio/systemVolume"), config_.audio.systemVolume);
+    s.setValue(QStringLiteral("audio/micVolume"), config_.audio.micVolume);
+    s.setValue(QStringLiteral("audio/denoise"), config_.audio.denoise);
 }
 
 void AppController::openOutputFolder() {
