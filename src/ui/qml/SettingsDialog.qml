@@ -6,6 +6,7 @@ import NotionRecorder
 
 Window {
     id: dlg
+    objectName: "settingsDialogWindow"
     width: 700
     height: 460
     flags: Qt.Dialog

@@ -10,11 +10,11 @@ Window {
     color: "transparent"
 
     SettingsDialog {
-        id: settingsDialog
+        id: settingsDialogWindow
     }
 
     RegionSelector {
-        id: regionSelector
+        id: regionSelectorWindow
     }
 
     AnnotationOverlay {
@@ -23,16 +23,16 @@ Window {
     }
 
     RecordingHistory {
-        id: historyDialog
+        id: historyDialogWindow
     }
 
     FloatingBar {
         anchors.fill: parent
         anchors.margins: 10
         rootWindow: root
-        settingsDialog: settingsDialog
-        regionSelector: regionSelector
-        historyDialog: historyDialog
+        settingsDialog: settingsDialogWindow
+        regionSelector: regionSelectorWindow
+        historyDialog: historyDialogWindow
     }
 
     // Transient notification toast (auto-save result / errors).

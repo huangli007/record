@@ -9,9 +9,9 @@ Item {
 
     property point dragOffset: Qt.point(0, 0)
     property var rootWindow: null
-    property var settingsDialog: null
-    property var regionSelector: null
-    property var historyDialog: null
+    property SettingsDialog settingsDialog: null
+    property RegionSelector regionSelector: null
+    property RecordingHistory historyDialog: null
     property bool encoderHovered: false
 
     layer.enabled: true
@@ -82,6 +82,7 @@ Item {
         // Record button: hollow ring when idle, solid red dot when recording
         Rectangle {
             id: recordButton
+            objectName: "recordButton"
             anchors.verticalCenter: parent.verticalCenter
             width: 38
             height: 38
@@ -152,6 +153,7 @@ Item {
         // Region selection
         Rectangle {
             id: regionButton
+            objectName: "regionButton"
             anchors.verticalCenter: parent.verticalCenter
             width: 30
             height: 30
@@ -180,13 +182,18 @@ Item {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: bar.regionSelector !== null ? bar.regionSelector.open() : null
+                onClicked: {
+                    if (bar.regionSelector !== null) {
+                        bar.regionSelector.visible = true
+                    }
+                }
             }
         }
 
         // Settings
         Rectangle {
             id: settingsButton
+            objectName: "settingsButton"
             anchors.verticalCenter: parent.verticalCenter
             width: 30
             height: 30
@@ -203,13 +210,18 @@ Item {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: bar.settingsDialog !== null ? bar.settingsDialog.open() : null
+                onClicked: {
+                    if (bar.settingsDialog !== null) {
+                        bar.settingsDialog.visible = true
+                    }
+                }
             }
         }
 
         // Recording history
         Rectangle {
             id: filesButton
+            objectName: "filesButton"
             anchors.verticalCenter: parent.verticalCenter
             width: 30
             height: 30
@@ -227,13 +239,18 @@ Item {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: bar.historyDialog !== null ? bar.historyDialog.open() : null
+                onClicked: {
+                    if (bar.historyDialog !== null) {
+                        bar.historyDialog.visible = true
+                    }
+                }
             }
         }
 
         // Annotation toggle (visible while recording)
         Rectangle {
             id: annotationButton
+            objectName: "annotationButton"
             anchors.verticalCenter: parent.verticalCenter
             width: 30
             height: 30

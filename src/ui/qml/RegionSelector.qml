@@ -3,6 +3,7 @@ import NotionRecorder
 
 Window {
     id: sel
+    objectName: "regionSelectorWindow"
     x: 0
     y: 0
     width: Screen.width

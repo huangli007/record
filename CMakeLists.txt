@@ -100,6 +100,26 @@ if(APPLE)
     )
     target_include_directories(denoise_test PRIVATE src)
     target_link_libraries(denoise_test PRIVATE "-framework Accelerate")
+
+    # QML click smoke test: verifies floating-bar buttons react to clicks.
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Test Quick Qml)
+    add_executable(qml_click_test
+        tests/qml_click_test.cpp
+    )
+    target_include_directories(qml_click_test PRIVATE src)
+    # Reuse the QML module resources generated for the app so the test can
+    # load the real Main.qml through the module (same as production).
+    target_sources(qml_click_test PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/notionrecorder_qmltyperegistrations.cpp"
+        "${CMAKE_CURRENT_BINARY_DIR}/.qt/rcc/qrc_NotionRecorder_raw_qml_0.cpp"
+        "${CMAKE_CURRENT_BINARY_DIR}/.qt/rcc/qrc_NotionRecorder_raw_qml_0_extra_qmldirs.cpp"
+        "${CMAKE_CURRENT_BINARY_DIR}/.qt/rcc/qrc_qmake_NotionRecorder.cpp"
+    )
+    target_link_libraries(qml_click_test PRIVATE
+        Qt6::Test
+        Qt6::Quick
+        Qt6::Qml
+    )
 endif()
 
 set_target_properties(NotionRecorder PROPERTIES

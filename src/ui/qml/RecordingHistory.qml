@@ -2,6 +2,7 @@ import QtQuick
 
 Window {
     id: historyWindow
+    objectName: "historyDialogWindow"
     width: 480
     height: 420
     title: "录制历史"
