@@ -8,6 +8,8 @@
 - **屏幕采集**：macOS ScreenCaptureKit，支持全屏、区域与**窗口锁定**录制（跟随窗口移动）、光标捕获、帧率锁定（24/30/60/120 或跟随屏幕刷新率）
 - **音频采集**：系统声音（ScreenCaptureKit Audio）+ 麦克风（CoreAudio AUHAL），双路混音，独立音量控制
 - **编码**：FFmpeg，优先硬件编码（`h264_videotoolbox` / `hevc_videotoolbox`），自动回退 `libx264` / `libx265`
+- **分辨率设置**：全屏录制支持 自动（跟随屏幕）/ 720p / 1080p / 1440p / 4K 预设输出，
+  区域/窗口录制按选择区域或窗口尺寸
 - **码率控制**：质量优先（CRF）/ 文件大小优先（CBR）两种模式，默认 1080p 60fps 6000kbps
 - **封装**：fragmented MP4（`frag_keyframe+empty_moov`），录制中断/崩溃后已录制部分仍可播放；支持 MKV
 - **时间基准**：统一微秒单调时钟，音视频时间戳对齐（PRD 50ms 容差目标）
