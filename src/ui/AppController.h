@@ -38,6 +38,7 @@ class AppController : public QObject {
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY stateChanged)
     Q_PROPERTY(int captureModeIndex READ captureModeIndex NOTIFY settingsChanged)
     Q_PROPERTY(int fps READ fps NOTIFY settingsChanged)
+    Q_PROPERTY(int resolutionIndex READ resolutionIndex WRITE setResolutionIndex NOTIFY settingsChanged)
     Q_PROPERTY(bool captureCursor READ captureCursor NOTIFY settingsChanged)
     Q_PROPERTY(bool clickEffects READ clickEffects NOTIFY settingsChanged)
     Q_PROPERTY(QString codec READ codec NOTIFY settingsChanged)
@@ -79,6 +80,8 @@ public:
     QString errorMessage() const;
     int captureModeIndex() const;
     int fps() const;
+    int resolutionIndex() const;
+    void setResolutionIndex(int index);
     bool captureCursor() const;
     bool clickEffects() const;
     QString codec() const;

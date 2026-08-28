@@ -78,7 +78,8 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
         const double scale = ScreenCaptureKitCapturer::displayScale();
         config_.video.width = static_cast<int>(config_.video.region.width * scale);
         config_.video.height = static_cast<int>(config_.video.region.height * scale);
-    } else if (config_.video.mode == CaptureMode::FullScreen) {
+    } else if (config_.video.mode == CaptureMode::FullScreen &&
+               (config_.video.width <= 0 || config_.video.height <= 0)) {
         const CGRect bounds = CGDisplayBounds(CGMainDisplayID());
         config_.video.width = static_cast<int>(bounds.size.width);
         config_.video.height = static_cast<int>(bounds.size.height);
@@ -137,7 +138,10 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
 
     running_.store(true);
     paused_.store(false);
-    if (config_.audio.captureSystemAudio && config_.audio.captureMicrophone) {
+    // Start the mixer whenever any audio source is enabled. Without it,
+    // system-audio frames would pile up unconsumed and the file would be
+    // silent (default config: system audio on, mic off).
+    if (hasAudio_) {
         audioMixThread_ = std::thread([this] { audioMixLoop(); });
     }
     encoderThread_ = std::thread([this] { encodeLoop(); });

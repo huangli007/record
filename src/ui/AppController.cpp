@@ -207,6 +207,19 @@ int AppController::fps() const {
     return config_.video.fps;
 }
 
+int AppController::resolutionIndex() const {
+    return config_.video.resolutionPreset;
+}
+
+void AppController::setResolutionIndex(int index) {
+    index = qBound(0, index, 4);
+    if (config_.video.resolutionPreset == index) {
+        return;
+    }
+    config_.video.resolutionPreset = index;
+    saveSettings();
+}
+
 bool AppController::captureCursor() const {
     return config_.video.captureCursor;
 }
@@ -386,6 +399,15 @@ void AppController::togglePause() {
 void AppController::startRecording() {
     if (session_ && session_->state() != RecordingSession::State::Idle) {
         return;
+    }
+    // Apply the resolution preset for full-screen captures; "auto" (0) lets
+    // the session follow the display size.
+    if (config_.video.mode == CaptureMode::FullScreen) {
+        static constexpr int kResolutions[5][2] = {
+            {0, 0}, {1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}};
+        const int preset = qBound(0, config_.video.resolutionPreset, 4);
+        config_.video.width = kResolutions[preset][0];
+        config_.video.height = kResolutions[preset][1];
     }
     errorMessage_.clear();
     session_ = std::make_unique<RecordingSession>();
@@ -641,6 +663,10 @@ void AppController::loadSettings() {
         s.value(QStringLiteral("video/regionHeight"), config_.video.region.height).toInt();
     config_.video.fps =
         s.value(QStringLiteral("video/fps"), config_.video.fps).toInt();
+    config_.video.resolutionPreset =
+        s.value(QStringLiteral("video/resolutionPreset"),
+                config_.video.resolutionPreset)
+            .toInt();
     config_.video.captureCursor =
         s.value(QStringLiteral("video/captureCursor"), config_.video.captureCursor).toBool();
     config_.video.clickEffects =
@@ -703,6 +729,8 @@ void AppController::saveSettings() {
     s.setValue(QStringLiteral("video/regionWidth"), config_.video.region.width);
     s.setValue(QStringLiteral("video/regionHeight"), config_.video.region.height);
     s.setValue(QStringLiteral("video/fps"), config_.video.fps);
+    s.setValue(QStringLiteral("video/resolutionPreset"),
+               config_.video.resolutionPreset);
     s.setValue(QStringLiteral("video/captureCursor"), config_.video.captureCursor);
     s.setValue(QStringLiteral("video/clickEffects"), config_.video.clickEffects);
     s.setValue(QStringLiteral("video/codec"),

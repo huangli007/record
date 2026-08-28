@@ -202,10 +202,16 @@ Window {
             Layout.rightMargin: 24
 
             // ---------- 通用 ----------
-            ColumnLayout {
+            ScrollView {
+                id: generalScroll
                 visible: dlg.page === "general"
                 anchors.fill: parent
-                spacing: 20
+                clip: true
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                ColumnLayout {
+                    width: generalScroll.availableWidth
+                    spacing: 20
 
                 SectionTitle { text: "保存位置" }
                 RowLayout {
@@ -321,14 +327,21 @@ Window {
                     checked: true
                 }
 
-                Item { Layout.fillHeight: true }
+                    Item { Layout.fillHeight: true }
+                }
             }
 
             // ---------- 视频 ----------
-            ColumnLayout {
+            ScrollView {
+                id: videoScroll
                 visible: dlg.page === "video"
                 anchors.fill: parent
-                spacing: 18
+                clip: true
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                ColumnLayout {
+                    width: videoScroll.availableWidth
+                    spacing: 18
 
                 SectionTitle { text: "录制模式" }
                 ComboBox {
@@ -348,6 +361,23 @@ Window {
                     onActivated: (index) => {
                         const fps = [0, 24, 30, 60, 120][index]
                         app.setFps(fps)
+                    }
+                }
+
+                SectionTitle { text: "分辨率" }
+                ComboBox {
+                    id: resolutionCombo
+                    Layout.preferredWidth: 220
+                    model: ["自动（跟随屏幕）", "720p (1280×720)",
+                            "1080p (1920×1080)", "1440p (2560×1440)",
+                            "4K (3840×2160)"]
+                    currentIndex: app.resolutionIndex
+                    onActivated: (index) => app.setResolutionIndex(index)
+                    Connections {
+                        target: app
+                        function onSettingsChanged() {
+                            currentIndex = app.resolutionIndex
+                        }
                     }
                 }
 
@@ -419,14 +449,21 @@ Window {
                     onChanged: (value) => app.setCrf(value)
                 }
 
-                Item { Layout.fillHeight: true }
+                    Item { Layout.fillHeight: true }
+                }
             }
 
             // ---------- 音频 ----------
-            ColumnLayout {
+            ScrollView {
+                id: audioScroll
                 visible: dlg.page === "audio"
                 anchors.fill: parent
-                spacing: 18
+                clip: true
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                ColumnLayout {
+                    width: audioScroll.availableWidth
+                    spacing: 18
 
                 SwitchRow {
                     id: systemAudioSwitch
@@ -469,14 +506,21 @@ Window {
                     color: "#D3D1CA"
                 }
 
-                Item { Layout.fillHeight: true }
+                    Item { Layout.fillHeight: true }
+                }
             }
 
             // ---------- 热键 ----------
-            ColumnLayout {
+            ScrollView {
+                id: hotkeyScroll
                 visible: dlg.page === "hotkeys"
                 anchors.fill: parent
-                spacing: 20
+                clip: true
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                ColumnLayout {
+                    width: hotkeyScroll.availableWidth
+                    spacing: 20
 
                 SectionTitle { text: "开始 / 停止录制" }
                 Rectangle {
@@ -514,7 +558,8 @@ Window {
                     color: "#D3D1CA"
                 }
 
-                Item { Layout.fillHeight: true }
+                    Item { Layout.fillHeight: true }
+                }
             }
         }
     }
@@ -539,6 +584,7 @@ Window {
             formatCombo.currentIndex = app.formatIndex
             modeCombo.currentIndex = app.captureModeIndex
             fpsCombo.currentIndex = [0, 24, 30, 60, 120].indexOf(app.fps)
+            resolutionCombo.currentIndex = app.resolutionIndex
             cursorSwitch.checked = app.captureCursor
             clickSwitch.checked = app.clickEffects
             annotationSwitch.checked = app.annotationMode

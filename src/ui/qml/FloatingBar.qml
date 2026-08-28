@@ -58,7 +58,9 @@ Item {
             font.pixelSize: 13
             font.weight: app.recording ? Font.Medium : Font.Normal
             color: app.recording ? "#EB5757" : (app.paused ? "#9B9A97" : "#37352F")
-            text: app.statusText
+            text: app.recording ? "录制中 " + app.elapsedText
+                                : (app.paused ? "已暂停 " + app.elapsedText
+                                              : app.statusText)
             width: 150
             horizontalAlignment: Text.AlignLeft
             elide: Text.ElideRight

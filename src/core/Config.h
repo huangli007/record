@@ -38,6 +38,7 @@ struct VideoConfig {
     int width = 1920;
     int height = 1080;
     int fps = 60;              // 24 / 30 / 60 / 120, 0 = auto (display refresh)
+    int resolutionPreset = 0;  // 0=auto, 1=720p, 2=1080p, 3=1440p, 4=4K
     bool captureCursor = true;
     bool clickEffects = false;
     std::string codec = "auto"; // auto | h264 | h265
