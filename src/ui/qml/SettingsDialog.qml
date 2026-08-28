@@ -255,8 +255,10 @@ Window {
 
                 SectionTitle { text: "文件格式" }
                 ComboBox {
+                    id: formatCombo
                     Layout.preferredWidth: 200
                     model: ["mp4", "mkv"]
+                    currentIndex: app.formatIndex
                     onActivated: (index) => app.setFormat(currentText)
                 }
 
@@ -276,16 +278,19 @@ Window {
 
                 SectionTitle { text: "录制模式" }
                 ComboBox {
+                    id: modeCombo
                     Layout.preferredWidth: 220
                     model: ["全屏录制", "区域录制", "窗口录制"]
+                    currentIndex: app.captureModeIndex
                     onActivated: (index) => app.setCaptureMode(index)
                 }
 
                 SectionTitle { text: "帧率" }
                 ComboBox {
+                    id: fpsCombo
                     Layout.preferredWidth: 220
                     model: ["自动（跟随屏幕刷新率）", "24 FPS", "30 FPS", "60 FPS", "120 FPS"]
-                    currentIndex: 3
+                    currentIndex: [0, 24, 30, 60, 120].indexOf(app.fps)
                     onActivated: (index) => {
                         const fps = [0, 24, 30, 60, 120][index]
                         app.setFps(fps)
@@ -293,21 +298,25 @@ Window {
                 }
 
                 SwitchRow {
+                    id: cursorSwitch
                     label: "录制光标"
-                    checked: true
+                    checked: app.captureCursor
                     onToggled: (value) => app.setCaptureCursor(value)
                 }
 
                 SwitchRow {
+                    id: clickSwitch
                     label: "点击特效"
-                    checked: false
+                    checked: app.clickEffects
                     onToggled: (value) => app.setClickEffects(value)
                 }
 
                 SectionTitle { text: "编码器" }
                 ComboBox {
+                    id: codecCombo
                     Layout.preferredWidth: 220
                     model: ["自动（优先硬件编码）", "H.264", "H.265"]
+                    currentIndex: ["auto", "h264", "h265"].indexOf(app.codec)
                     onActivated: (index) => {
                         const codec = ["auto", "h264", "h265"][index]
                         app.setCodec(codec)
@@ -316,27 +325,27 @@ Window {
 
                 SectionTitle { text: "码率控制" }
                 ComboBox {
+                    id: bitrateModeCombo
                     Layout.preferredWidth: 220
                     model: ["质量优先（CRF）", "文件大小优先（CBR）"]
-                    currentIndex: 1
+                    currentIndex: app.bitrateMode
                     onActivated: (index) => app.setBitrateMode(index)
                 }
 
                 SliderRow {
                     id: bitrateSlider
                     label: "码率"
-                    value: 6000
+                    value: app.bitrateKbps
                     from: 1000
                     to: 20000
                     stepSize: 500
                     onChanged: (value) => app.setBitrateKbps(value)
-                    visible: true
                 }
 
                 SliderRow {
                     id: crfSlider
                     label: "CRF"
-                    value: 18
+                    value: app.crf
                     from: 0
                     to: 51
                     stepSize: 1
@@ -353,37 +362,42 @@ Window {
                 spacing: 18
 
                 SwitchRow {
+                    id: systemAudioSwitch
                     label: "录制系统声音"
-                    checked: true
+                    checked: app.systemAudio
                     onToggled: (value) => app.setSystemAudio(value)
                 }
 
                 SliderRow {
+                    id: systemVolumeSlider
                     label: "系统音量"
-                    value: 100
+                    value: app.systemVolume
                     onChanged: (value) => app.setSystemVolume(value)
                 }
 
                 SwitchRow {
+                    id: micSwitch
                     label: "录制麦克风"
-                    checked: false
+                    checked: app.microphone
                     onToggled: (value) => app.setMicrophone(value)
                 }
 
                 SliderRow {
+                    id: micVolumeSlider
                     label: "麦克风音量"
-                    value: 100
+                    value: app.micVolume
                     onChanged: (value) => app.setMicVolume(value)
                 }
 
                 SwitchRow {
-                    label: "降噪（WebRTC）"
-                    checked: false
+                    id: denoiseSwitch
+                    label: "降噪"
+                    checked: app.denoise
                     onToggled: (value) => app.setDenoise(value)
                 }
 
                 Text {
-                    text: "降噪将在后续版本中启用"
+                    text: "谱减法实时降噪，过滤麦克风环境底噪"
                     font.pixelSize: 11
                     color: "#D3D1CA"
                 }
@@ -428,7 +442,7 @@ Window {
                 }
 
                 Text {
-                    text: "全局热键注册将在后续版本启用"
+                    text: "全局热键已启用：⌘⇧R 开始/停止，⌘⇧P 暂停/继续"
                     font.pixelSize: 11
                     color: "#D3D1CA"
                 }
@@ -449,5 +463,26 @@ Window {
         }
     }
 
-    property string outputDirField: ""
+    property string outputDirField: app.outputDir
+
+    Connections {
+        target: app
+        function onSettingsChanged() {
+            outputDirField = app.outputDir
+            formatCombo.currentIndex = app.formatIndex
+            modeCombo.currentIndex = app.captureModeIndex
+            fpsCombo.currentIndex = [0, 24, 30, 60, 120].indexOf(app.fps)
+            cursorSwitch.checked = app.captureCursor
+            clickSwitch.checked = app.clickEffects
+            codecCombo.currentIndex = ["auto", "h264", "h265"].indexOf(app.codec)
+            bitrateModeCombo.currentIndex = app.bitrateMode
+            bitrateSlider.value = app.bitrateKbps
+            crfSlider.value = app.crf
+            systemAudioSwitch.checked = app.systemAudio
+            systemVolumeSlider.value = app.systemVolume
+            micSwitch.checked = app.microphone
+            micVolumeSlider.value = app.micVolume
+            denoiseSwitch.checked = app.denoise
+        }
+    }
 }

@@ -7,9 +7,11 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <vector>
 
+#include "audio/Denoiser.h"
 #include "capture/AudioFrame.h"
 #include "core/TimeBase.h"
 
@@ -28,6 +30,13 @@ struct CoreAudioCapturer::Impl {
     std::mutex restartMutex;
     dispatch_queue_t restartQueue = nullptr;
     bool listenerRegistered = false;
+    std::unique_ptr<Denoiser> denoiser;
+    bool denoiseEnabled = false;
+    std::vector<float> monoScratch;
+    std::vector<float> ch0;
+    std::vector<float> ch1;
+    std::vector<float> out0;
+    std::vector<float> out1;
 
     static OSStatus deviceChangedListener(AudioObjectID /*inObjectID*/,
                                           UInt32 /*inNumberAddresses*/,
@@ -172,6 +181,27 @@ struct CoreAudioCapturer::Impl {
 
         const float vol = self->paused.load() ? 0.0f : self->volume.load();
         frame.samples.assign(scratch.begin(), scratch.end());
+        if (self->denoiseEnabled && self->denoiser && !frame.samples.empty()) {
+            const size_t n = inNumberFrames;
+            if (frame.channels == 2) {
+                for (size_t i = 0; i < n; ++i) {
+                    self->ch0[i] = frame.samples[i * 2];
+                    self->ch1[i] = frame.samples[i * 2 + 1];
+                }
+                self->denoiser->process(self->ch0.data(), self->out0.data(), n);
+                self->denoiser->process(self->ch1.data(), self->out1.data(), n);
+                for (size_t i = 0; i < n; ++i) {
+                    frame.samples[i * 2] = self->out0[i];
+                    frame.samples[i * 2 + 1] = self->out1[i];
+                }
+            } else if (frame.channels == 1) {
+                self->denoiser->process(frame.samples.data(),
+                                        self->monoScratch.data(), n);
+                std::copy(self->monoScratch.begin(),
+                          self->monoScratch.begin() + static_cast<long>(n),
+                          frame.samples.begin());
+            }
+        }
         if (vol != 1.0f) {
             for (float& s : frame.samples) {
                 s *= vol;
@@ -215,6 +245,17 @@ bool CoreAudioCapturer::start(const AudioConfig& config, AudioFrameCallback onFr
     impl_->paused.store(false);
     impl_->frameCounter.store(0);
     impl_->onFrame = std::move(onFrame);
+    impl_->denoiseEnabled = config.denoise;
+    if (impl_->denoiseEnabled) {
+        impl_->denoiser = std::make_unique<Denoiser>(sampleRate);
+        impl_->monoScratch.resize(4096);
+        impl_->ch0.resize(4096);
+        impl_->ch1.resize(4096);
+        impl_->out0.resize(4096);
+        impl_->out1.resize(4096);
+    } else {
+        impl_->denoiser.reset();
+    }
 
     if (!impl_->restartQueue) {
         impl_->restartQueue =
@@ -260,6 +301,8 @@ void CoreAudioCapturer::stop() {
     }
     impl_->stopUnit();
     impl_->onFrame = nullptr;
+    impl_->denoiser.reset();
+    impl_->denoiseEnabled = false;
 }
 
 void CoreAudioCapturer::setPaused(bool paused) {

@@ -170,6 +170,73 @@ QString AppController::errorMessage() const {
     return errorMessage_;
 }
 
+int AppController::captureModeIndex() const {
+    switch (config_.video.mode) {
+        case CaptureMode::Region:
+            return 1;
+        case CaptureMode::Window:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+int AppController::fps() const {
+    return config_.video.fps;
+}
+
+bool AppController::captureCursor() const {
+    return config_.video.captureCursor;
+}
+
+bool AppController::clickEffects() const {
+    return config_.video.clickEffects;
+}
+
+QString AppController::codec() const {
+    return QString::fromStdString(config_.video.codec);
+}
+
+int AppController::bitrateMode() const {
+    return config_.video.bitrateMode == BitrateMode::Quality ? 0 : 1;
+}
+
+int AppController::bitrateKbps() const {
+    return config_.video.bitrateKbps;
+}
+
+int AppController::crf() const {
+    return config_.video.crf;
+}
+
+bool AppController::systemAudio() const {
+    return config_.audio.captureSystemAudio;
+}
+
+bool AppController::microphone() const {
+    return config_.audio.captureMicrophone;
+}
+
+int AppController::systemVolume() const {
+    return config_.audio.systemVolume;
+}
+
+int AppController::micVolume() const {
+    return config_.audio.micVolume;
+}
+
+bool AppController::denoise() const {
+    return config_.audio.denoise;
+}
+
+QString AppController::outputDir() const {
+    return QString::fromStdString(config_.general.outputDir);
+}
+
+int AppController::formatIndex() const {
+    return config_.general.format == "mkv" ? 1 : 0;
+}
+
 void AppController::toggleRecording() {
     if (session_ && (session_->state() == RecordingSession::State::Recording ||
                      session_->state() == RecordingSession::State::Paused)) {
@@ -504,6 +571,7 @@ void AppController::saveSettings() {
     s.setValue(QStringLiteral("audio/systemVolume"), config_.audio.systemVolume);
     s.setValue(QStringLiteral("audio/micVolume"), config_.audio.micVolume);
     s.setValue(QStringLiteral("audio/denoise"), config_.audio.denoise);
+    Q_EMIT settingsChanged();
 }
 
 void AppController::openOutputFolder() {

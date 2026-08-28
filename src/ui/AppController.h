@@ -31,6 +31,21 @@ class AppController : public QObject {
     Q_PROPERTY(QVariantList windowList READ windowList NOTIFY windowsChanged)
     Q_PROPERTY(QString lastFilePath READ lastFilePath NOTIFY sessionFinished)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY stateChanged)
+    Q_PROPERTY(int captureModeIndex READ captureModeIndex NOTIFY settingsChanged)
+    Q_PROPERTY(int fps READ fps NOTIFY settingsChanged)
+    Q_PROPERTY(bool captureCursor READ captureCursor NOTIFY settingsChanged)
+    Q_PROPERTY(bool clickEffects READ clickEffects NOTIFY settingsChanged)
+    Q_PROPERTY(QString codec READ codec NOTIFY settingsChanged)
+    Q_PROPERTY(int bitrateMode READ bitrateMode NOTIFY settingsChanged)
+    Q_PROPERTY(int bitrateKbps READ bitrateKbps NOTIFY settingsChanged)
+    Q_PROPERTY(int crf READ crf NOTIFY settingsChanged)
+    Q_PROPERTY(bool systemAudio READ systemAudio NOTIFY settingsChanged)
+    Q_PROPERTY(bool microphone READ microphone NOTIFY settingsChanged)
+    Q_PROPERTY(int systemVolume READ systemVolume NOTIFY settingsChanged)
+    Q_PROPERTY(int micVolume READ micVolume NOTIFY settingsChanged)
+    Q_PROPERTY(bool denoise READ denoise NOTIFY settingsChanged)
+    Q_PROPERTY(QString outputDir READ outputDir NOTIFY settingsChanged)
+    Q_PROPERTY(int formatIndex READ formatIndex NOTIFY settingsChanged)
 
 public:
     explicit AppController(QObject* parent = nullptr);
@@ -48,6 +63,21 @@ public:
     QVariantList windowList() const;
     QString lastFilePath() const;
     QString errorMessage() const;
+    int captureModeIndex() const;
+    int fps() const;
+    bool captureCursor() const;
+    bool clickEffects() const;
+    QString codec() const;
+    int bitrateMode() const;
+    int bitrateKbps() const;
+    int crf() const;
+    bool systemAudio() const;
+    bool microphone() const;
+    int systemVolume() const;
+    int micVolume() const;
+    bool denoise() const;
+    QString outputDir() const;
+    int formatIndex() const;
 
     Q_INVOKABLE void toggleRecording();
     Q_INVOKABLE void togglePause();
@@ -77,6 +107,7 @@ Q_SIGNALS:
     void elapsedChanged();
     void statsChanged();
     void windowsChanged();
+    void settingsChanged();
     void sessionFinished(const QString& path);
     void recordingFailed(const QString& message);
 

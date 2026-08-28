@@ -21,6 +21,8 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 
 qt_add_executable(NotionRecorder
     src/main.cpp
+    src/audio/Denoiser.cpp
+    src/audio/Denoiser.h
     src/ui/AppController.cpp
     src/ui/AppController.h
     src/core/Config.cpp
@@ -68,6 +70,7 @@ target_link_libraries(NotionRecorder PRIVATE
     "-framework Foundation"
     "-framework AppKit"
     "-framework Carbon"
+    "-framework Accelerate"
 )
 
 # Self-test: synthetic frames -> encode -> fragmented MP4 (no screen/mic access).
@@ -86,6 +89,17 @@ if(APPLE)
         "-framework CoreMedia"
         "-framework Foundation"
     )
+endif()
+
+if(APPLE)
+    # Denoiser self-test: verifies SNR improvement on synthetic noisy tone.
+    add_executable(denoise_test
+        tests/denoise_test.cpp
+        src/audio/Denoiser.cpp
+        src/audio/Denoiser.h
+    )
+    target_include_directories(denoise_test PRIVATE src)
+    target_link_libraries(denoise_test PRIVATE "-framework Accelerate")
 endif()
 
 set_target_properties(NotionRecorder PROPERTIES
