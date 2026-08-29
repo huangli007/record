@@ -1,5 +1,8 @@
 name: build-release
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [main, master]
@@ -92,4 +95,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/NotionRecorder-*-macos.zip
-          overwrite: true
+          overwrite_files: true

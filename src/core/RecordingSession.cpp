@@ -570,7 +570,7 @@ void RecordingSession::writeAudioDebugLog() {
     const auto s = audioDebugStats();
     const std::string baseName =
         std::filesystem::path(outputPath_).filename().string();
-    FILE* f = std::fopen(logPath.c_str(), "a");
+    FILE* f = std::fopen(logPath.string().c_str(), "a");
     if (!f) {
         return;
     }
