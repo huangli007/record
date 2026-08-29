@@ -1,5 +1,6 @@
 build/
 cmake-build-*/
+dist/
 .DS_Store
 *.user
 *.autosave
