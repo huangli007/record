@@ -56,9 +56,30 @@ public:
     size_t videoQueueDepth() const;
     size_t encodedQueueDepth() const;
 
+    // Counters across the audio pipeline, for troubleshooting silent files.
+    struct AudioDebugStats {
+        long long sckAudioCallbacks = 0;   // SCK audio buffers delivered
+        long long sckAudioEmptyDrops = 0;  // SCK buffers dropped by parser
+        long long sckAudioSamples = 0;     // samples delivered by SCK
+        long long systemAudioFrames = 0;   // frames entering the session
+        long long tapFrames = 0;           // frames from the CoreAudio tap fallback
+        bool tapActive = false;            // tap fallback is supplying audio
+        long long mixPushed = 0;           // frames pushed to the encoder queue
+        long long mixDropped = 0;          // frames dropped due to full queue
+        long long encodedFrames = 0;       // frames accepted by the AAC encoder
+        long long encodeFailures = 0;      // frames rejected by the encoder
+        long long encodedPackets = 0;      // AAC packets produced
+        long long muxedPackets = 0;        // AAC packets written to the file
+        long long muxFailures = 0;         // packets the muxer rejected
+        long long tapSetupErrors = 0;      // tap fallback setup failures
+        std::string sckAudioError;         // SCK audio output registration error
+    };
+    AudioDebugStats audioDebugStats() const;
+
 private:
     void onVideoFrame(VideoFrame frame);
     void onSystemAudio(AudioFrame frame);
+    void onTapSystemAudio(AudioFrame frame);
     void onMicAudio(AudioFrame frame);
     void onVideoPacket(EncodedPacket packet);
     void onAudioPacket(EncodedPacket packet);
@@ -67,6 +88,7 @@ private:
     void encodeLoop();
     void muxLoop();
     void ensureMuxHeader();
+    void writeAudioDebugLog();
     void setState(State state);
     void cleanupQueues();
 
@@ -79,6 +101,7 @@ private:
 
     std::unique_ptr<ScreenCapturer> screenCapturer_;
     std::unique_ptr<AudioCapturer> micCapturer_;
+    std::unique_ptr<AudioCapturer> tapCapturer_;
     std::unique_ptr<VideoEncoder> videoEncoder_;
     std::unique_ptr<AudioEncoder> audioEncoder_;
     std::unique_ptr<Muxer> muxer_;
@@ -100,6 +123,18 @@ private:
     int64_t pausedTotalUs_ = 0;
     int64_t pausedAtUs_ = 0;
     bool hasAudio_ = false;
+
+    std::atomic<long long> systemAudioFrames_{0};
+    std::atomic<long long> mixPushed_{0};
+    std::atomic<long long> mixDropped_{0};
+    std::atomic<long long> encodedFrames_{0};
+    std::atomic<long long> encodeFailures_{0};
+    std::atomic<long long> encodedPackets_{0};
+    std::atomic<long long> muxedPackets_{0};
+    std::atomic<long long> muxFailures_{0};
+    std::atomic<bool> tapAudioActive_{false};
+    std::atomic<bool> tapStarted_{false};
+    std::atomic<long long> tapFrames_{0};
 };
 
 } // namespace nr

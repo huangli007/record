@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(NotionRecorder VERSION 0.1.0 LANGUAGES CXX)
+project(NotionRecorder VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,6 +37,8 @@ qt_add_executable(NotionRecorder
     src/capture/macos/ScreenCaptureKitCapturer.h
     src/capture/macos/CoreAudioCapturer.mm
     src/capture/macos/CoreAudioCapturer.h
+    src/capture/macos/CoreAudioTapCapturer.mm
+    src/capture/macos/CoreAudioTapCapturer.h
     src/codec/VideoEncoder.cpp
     src/codec/VideoEncoder.h
     src/codec/AudioEncoder.cpp

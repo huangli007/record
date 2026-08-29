@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -147,6 +148,11 @@ struct ScreenCaptureKitCapturer::Impl {
     std::atomic<int> systemVolume{100};
     std::atomic<int64_t> videoBaseUs{0};
     std::atomic<int64_t> audioBaseUs{0};
+    std::atomic<long long> audioCallbacks{0};
+    std::atomic<long long> audioEmptyDrops{0};
+    std::atomic<long long> audioSamples{0};
+    std::mutex audioSetupMutex;
+    std::string audioSetupError;
     std::mutex errorMutex;
     std::mutex restartMutex;
     dispatch_queue_t restartQueue = nullptr;
@@ -237,11 +243,15 @@ struct ScreenCaptureKitCapturer::Impl {
         }
         impl->emitVideo(std::move(frame));
     } else if (type == SCStreamOutputTypeAudio) {
+        impl->audioCallbacks.fetch_add(1);
         nr::AudioFrame audio =
             nr::makeAudioFrame(sampleBuffer, nr::AudioSource::System, impl->volume());
         if (audio.samples.empty()) {
+            impl->audioEmptyDrops.fetch_add(1);
             return;
         }
+        impl->audioSamples.fetch_add(
+            static_cast<long long>(audio.samples.size()));
         if (impl->audioBase() == 0 && audio.ptsUs != 0) {
             impl->audioBaseUs.store(audio.ptsUs);
         }
@@ -263,7 +273,8 @@ ScreenCaptureKitCapturer::~ScreenCaptureKitCapturer() {
 
 bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
                                      const AudioConfig& audioConfig,
-                                     VideoFrameCallback onFrame) {
+                                     VideoFrameCallback onFrame,
+                                     AudioFrameCallback onAudio) {
     if (!impl_) {
         return false;
     }
@@ -273,6 +284,7 @@ bool ScreenCaptureKitCapturer::start(const VideoConfig& videoConfig,
     impl_->audioConfig = audioConfig;
     impl_->owner = this;
     impl_->onVideo = std::move(onFrame);
+    impl_->onAudio = std::move(onAudio);
     impl_->stopped.store(false);
     if (!impl_->restartQueue) {
         impl_->restartQueue =
@@ -425,10 +437,19 @@ bool ScreenCaptureKitCapturer::startStream() {
     }
     if (audioConfig.captureSystemAudio) {
         NSError* audioError = nil;
-        [impl_->stream addStreamOutput:impl_->delegate
-                                  type:SCStreamOutputTypeAudio
-                    sampleHandlerQueue:impl_->queue
-                                 error:&audioError];
+        const BOOL audioOk = [impl_->stream
+            addStreamOutput:impl_->delegate
+                       type:SCStreamOutputTypeAudio
+         sampleHandlerQueue:impl_->queue
+                      error:&audioError];
+        if (!audioOk) {
+            std::lock_guard<std::mutex> lock(impl_->audioSetupMutex);
+            impl_->audioSetupError =
+                audioError ? audioError.localizedDescription.UTF8String
+                           : "addStreamOutput(audio) failed";
+            std::fprintf(stderr, "[SCK] 音频输出注册失败: %s\n",
+                         impl_->audioSetupError.c_str());
+        }
     }
 
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
@@ -456,6 +477,8 @@ void ScreenCaptureKitCapturer::restartStream() {
     }
     std::lock_guard<std::mutex> lock(impl_->restartMutex);
     if (impl_->stream) {
+        impl_->videoBaseUs.store(0);
+        impl_->audioBaseUs.store(0);
         dispatch_semaphore_t sem = dispatch_semaphore_create(0);
         [impl_->stream stopCaptureWithCompletionHandler:^(NSError*) {
             dispatch_semaphore_signal(sem);
@@ -538,6 +561,21 @@ std::vector<WindowInfo> ScreenCaptureKitCapturer::listWindows() {
 double ScreenCaptureKitCapturer::displayScale() {
     NSScreen* screen = NSScreen.mainScreen;
     return screen ? screen.backingScaleFactor : 1.0;
+}
+
+ScreenCaptureKitCapturer::AudioDebugStats
+ScreenCaptureKitCapturer::audioDebugStats() const {
+    AudioDebugStats stats;
+    if (impl_) {
+        stats.audioCallbacks = impl_->audioCallbacks.load();
+        stats.audioEmptyDrops = impl_->audioEmptyDrops.load();
+        stats.audioSamples = impl_->audioSamples.load();
+        {
+            std::lock_guard<std::mutex> lock(impl_->audioSetupMutex);
+            stats.audioSetupError = impl_->audioSetupError;
+        }
+    }
+    return stats;
 }
 
 void ScreenCaptureKitCapturer::stop() {

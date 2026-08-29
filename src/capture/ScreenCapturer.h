@@ -32,7 +32,8 @@ public:
     // stream as the screen.
     virtual bool start(const VideoConfig& videoConfig,
                        const AudioConfig& audioConfig,
-                       VideoFrameCallback onFrame) = 0;
+                       VideoFrameCallback onFrame,
+                       AudioFrameCallback onAudio = {}) = 0;
     virtual void stop() = 0;
     virtual void setPaused(bool paused) = 0;
 

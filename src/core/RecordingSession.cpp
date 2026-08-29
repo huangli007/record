@@ -1,8 +1,11 @@
 #include "core/RecordingSession.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 
 #if defined(__APPLE__)
@@ -10,6 +13,7 @@
 #endif
 
 #include "capture/macos/CoreAudioCapturer.h"
+#include "capture/macos/CoreAudioTapCapturer.h"
 #include "capture/macos/ScreenCaptureKitCapturer.h"
 #include "codec/EncoderFactory.h"
 #include "core/TimeBase.h"
@@ -100,6 +104,11 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
     screenCapturer_ = std::make_unique<ScreenCaptureKitCapturer>();
     micCapturer_ =
         config_.audio.captureMicrophone ? std::make_unique<CoreAudioCapturer>() : nullptr;
+    tapCapturer_ =
+        config_.audio.captureSystemAudio ? std::make_unique<CoreAudioTapCapturer>() : nullptr;
+    tapAudioActive_.store(false);
+    tapStarted_.store(false);
+    tapFrames_.store(0);
 
     videoEncoder_ = EncoderFactory::createVideoEncoder(config_.video);
     if (!videoEncoder_->open(
@@ -147,16 +156,16 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
     encoderThread_ = std::thread([this] { encodeLoop(); });
     muxThread_ = std::thread([this] { muxLoop(); });
 
-    if (!screenCapturer_->start(config_.video, config_.audio,
-                                [this](VideoFrame f) { onVideoFrame(std::move(f)); })) {
+    if (!screenCapturer_->start(
+            config_.video, config_.audio,
+            [this](VideoFrame f) { onVideoFrame(std::move(f)); },
+            [this](AudioFrame f) { onSystemAudio(std::move(f)); })) {
         lastError_ = "无法启动屏幕采集，请检查“屏幕录制”权限（系统设置 → 隐私与安全性）";
         running_.store(false);
         cleanupQueues();
         setState(State::Error);
         return false;
     }
-    screenCapturer_->setSystemAudioCallback(
-        [this](AudioFrame f) { onSystemAudio(std::move(f)); });
 
     if (micCapturer_) {
         if (!micCapturer_->start(config_.audio,
@@ -191,6 +200,9 @@ void RecordingSession::stop() {
     if (micCapturer_) {
         micCapturer_->stop();
     }
+    if (tapCapturer_) {
+        tapCapturer_->stop();
+    }
 
     videoQueue_.close();
     systemAudioQueue_.close();
@@ -217,12 +229,16 @@ void RecordingSession::stop() {
     if (muxer_) {
         muxer_->close();
     }
+    writeAudioDebugLog();
 
     videoEncoder_.reset();
     audioEncoder_.reset();
     muxer_.reset();
     screenCapturer_.reset();
     micCapturer_.reset();
+    tapCapturer_.reset();
+    tapAudioActive_.store(false);
+    tapStarted_.store(false);
     setState(State::Idle);
     outputPath_.clear();
 }
@@ -303,9 +319,19 @@ void RecordingSession::onVideoFrame(VideoFrame frame) {
 }
 
 void RecordingSession::onSystemAudio(AudioFrame frame) {
+    if (paused_.load() || tapAudioActive_.load()) {
+        return;
+    }
+    systemAudioFrames_.fetch_add(1);
+    systemAudioQueue_.push(std::move(frame), std::chrono::milliseconds(10));
+}
+
+void RecordingSession::onTapSystemAudio(AudioFrame frame) {
     if (paused_.load()) {
         return;
     }
+    tapAudioActive_.store(true);
+    tapFrames_.fetch_add(1);
     systemAudioQueue_.push(std::move(frame), std::chrono::milliseconds(10));
 }
 
@@ -325,6 +351,7 @@ void RecordingSession::onVideoPacket(EncodedPacket packet) {
 void RecordingSession::onAudioPacket(EncodedPacket packet) {
     ensureMuxHeader();
     packet.streamIndex = 1;
+    encodedPackets_.fetch_add(1);
     audioPacketQueue_.push(std::move(packet), std::chrono::milliseconds(50));
 }
 
@@ -343,25 +370,64 @@ void RecordingSession::ensureMuxHeader() {
 }
 
 void RecordingSession::audioMixLoop() {
+    const auto startTime = std::chrono::steady_clock::now();
     while (running_.load() ||
            !systemAudioQueue_.isClosed() || !micAudioQueue_.isClosed()) {
         auto sys = systemAudioQueue_.pop(std::chrono::milliseconds(20));
         auto mic = micAudioQueue_.pop(std::chrono::milliseconds(0));
 
+        const auto pushAudio = [this](AudioFrame frame) {
+            if (audioQueue_.push(std::move(frame), std::chrono::milliseconds(20))) {
+                mixPushed_.fetch_add(1);
+            } else {
+                mixDropped_.fetch_add(1);
+            }
+        };
+
         if (sys && mic) {
             if (std::llabs(sys->ptsUs - mic->ptsUs) < 40'000) {
-                audioQueue_.push(mixFrames(*sys, *mic), std::chrono::milliseconds(20));
+                pushAudio(mixFrames(*sys, *mic));
             } else if (sys->ptsUs < mic->ptsUs) {
-                audioQueue_.push(std::move(*sys), std::chrono::milliseconds(20));
+                pushAudio(std::move(*sys));
                 micAudioQueue_.unshift(std::move(*mic));
             } else {
-                audioQueue_.push(std::move(*mic), std::chrono::milliseconds(20));
+                pushAudio(std::move(*mic));
                 systemAudioQueue_.unshift(std::move(*sys));
             }
         } else if (sys) {
-            audioQueue_.push(std::move(*sys), std::chrono::milliseconds(20));
+            pushAudio(std::move(*sys));
         } else if (mic) {
-            audioQueue_.push(std::move(*mic), std::chrono::milliseconds(20));
+            pushAudio(std::move(*mic));
+        }
+
+        // Watchdog: if SCK was configured to capture system audio but has not
+        // delivered a single audio buffer within 2 seconds (a known failure
+        // mode on macOS 14.4+ depending on the granted privacy permission),
+        // fall back to the CoreAudio process tap so recordings still have
+        // sound. Once the tap is active, SCK audio frames are ignored.
+        if (!tapStarted_.load() && config_.audio.captureSystemAudio && tapCapturer_ &&
+            std::chrono::steady_clock::now() - startTime >
+                std::chrono::seconds(2)) {
+            tapStarted_.store(true);
+            long long callbacks = -1;
+            if (auto* sck =
+                    dynamic_cast<ScreenCaptureKitCapturer*>(screenCapturer_.get())) {
+                callbacks = sck->audioDebugStats().audioCallbacks;
+            }
+            if (callbacks == 0) {
+                if (tapCapturer_->start(
+                        config_.audio,
+                        [this](AudioFrame f) { onTapSystemAudio(std::move(f)); })) {
+                    // Once the tap owns system audio, drop any SCK audio
+                    // frames (they would double the recorded sound).
+                    tapAudioActive_.store(true);
+                    std::fprintf(stderr,
+                                 "[rec] SCK 音频无数据，已切换到系统音频 Tap 采集\n");
+                } else {
+                    std::fprintf(stderr,
+                                 "[rec] 系统音频 Tap 启动失败，保留 SCK 音频路径\n");
+                }
+            }
         }
     }
 }
@@ -375,7 +441,11 @@ void RecordingSession::encodeLoop() {
         }
         auto audio = audioQueue_.pop(std::chrono::milliseconds(0));
         if (audio && audioEncoder_) {
-            audioEncoder_->encode(*audio);
+            if (audioEncoder_->encode(*audio)) {
+                encodedFrames_.fetch_add(1);
+            } else {
+                encodeFailures_.fetch_add(1);
+            }
         }
     }
 }
@@ -392,11 +462,78 @@ void RecordingSession::muxLoop() {
         }
         auto audio = audioPacketQueue_.pop(std::chrono::milliseconds(0));
         if (audio && muxer_) {
-            muxer_->write(*audio);
+            if (muxer_->write(*audio)) {
+                muxedPackets_.fetch_add(1);
+            } else {
+                muxFailures_.fetch_add(1);
+            }
         } else if (audioPacketQueue_.isClosed()) {
             audioDone = true;
         }
     }
+}
+
+RecordingSession::AudioDebugStats RecordingSession::audioDebugStats() const {
+    AudioDebugStats stats;
+    stats.systemAudioFrames = systemAudioFrames_.load();
+    stats.tapFrames = tapFrames_.load();
+    stats.tapActive = tapAudioActive_.load();
+    stats.mixPushed = mixPushed_.load();
+    stats.mixDropped = mixDropped_.load();
+    stats.encodedFrames = encodedFrames_.load();
+    stats.encodeFailures = encodeFailures_.load();
+    stats.encodedPackets = encodedPackets_.load();
+    stats.muxedPackets = muxedPackets_.load();
+    stats.muxFailures = muxFailures_.load();
+    if (tapCapturer_) {
+        if (auto* tap = dynamic_cast<CoreAudioTapCapturer*>(tapCapturer_.get())) {
+            stats.tapSetupErrors = tap->stats().setupErrors;
+        }
+    }
+#if defined(__APPLE__)
+    if (auto* sck = dynamic_cast<ScreenCaptureKitCapturer*>(screenCapturer_.get())) {
+        const auto s = sck->audioDebugStats();
+        stats.sckAudioCallbacks = s.audioCallbacks;
+        stats.sckAudioEmptyDrops = s.audioEmptyDrops;
+        stats.sckAudioSamples = s.audioSamples;
+        stats.sckAudioError = s.audioSetupError;
+    }
+#endif
+    return stats;
+}
+
+void RecordingSession::writeAudioDebugLog() {
+    if (outputPath_.empty()) {
+        return;
+    }
+    const std::filesystem::path dir =
+        std::filesystem::path(outputPath_).parent_path();
+    const std::filesystem::path logPath = dir / "audio_debug.log";
+    const auto s = audioDebugStats();
+    const std::string baseName =
+        std::filesystem::path(outputPath_).filename().string();
+    FILE* f = std::fopen(logPath.c_str(), "a");
+    if (!f) {
+        return;
+    }
+    std::time_t now = std::time(nullptr);
+    char ts[32] = {};
+    std::strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    std::fprintf(
+        f,
+        "%s | %s | sckCallbacks=%lld sckEmptyDrops=%lld sckSamples=%lld "
+        "sckAudioError=\"%s\" | systemFrames=%lld tapFrames=%lld tapActive=%d "
+        "tapSetupErrors=%lld | mixPushed=%lld mixDropped=%lld | "
+        "encodedFrames=%lld encodeFailures=%lld | encodedPackets=%lld "
+        "muxedPackets=%lld muxFailures=%lld\n",
+        ts, baseName.c_str(),
+        s.sckAudioCallbacks, s.sckAudioEmptyDrops, s.sckAudioSamples,
+        s.sckAudioError.c_str(),
+        s.systemAudioFrames, s.tapFrames, s.tapActive ? 1 : 0, s.tapSetupErrors,
+        s.mixPushed, s.mixDropped,
+        s.encodedFrames, s.encodeFailures,
+        s.encodedPackets, s.muxedPackets, s.muxFailures);
+    std::fclose(f);
 }
 
 void RecordingSession::setState(State state) {

@@ -176,12 +176,22 @@ CoreAudio（麦克风）────────────────┘
 
 ## 已修复的兼容性问题
 
+- **录制无声（macOS 14.4+ 系统音频权限差异）**：ScreenCaptureKit 在某些权限
+  组合下不会回调任何音频缓冲，导致文件只有音轨头部、没有任何声音。现在若
+  采集启动后 2 秒内 SCK 未交付任何音频缓冲，会自动切换到 CoreAudio 全局
+  系统音频 Tap（macOS 14.2+）继续采集，录制不再无声。
 - **FFmpeg 9.x videotoolbox 崩溃**：FFmpeg 9 的 `videotoolboxenc.c` 从
   `frame->data[3]` 读取 CVPixelBuffer（旧版本读 `data[0]`），编码前需同时填充
   `data[0]` 与 `data[3]`，否则断言崩溃。
 - **QML 模块部署**：`qt_finalize_executable` 后仍需将生成的模块目录拷贝进
   app bundle 的 `Resources/qml/`，`main.cpp` 同时显式添加该导入路径，保证
   从构建目录直接运行。
+
+## 音频诊断
+
+每次录制结束后，程序会在录制目录下追加写入 `audio_debug.log`，记录
+SCK 音频回调数、Tap 兜底是否启用、混音/编码/封装各环节的帧计数与失败数。
+若再次遇到无声问题，把该文件内容发来即可快速定位是哪一环丢失了音频。
 
 ## 文档对照
 
