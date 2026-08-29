@@ -56,6 +56,20 @@ open build/NotionRecorder.app
 QML 模块在构建时自动部署到 app bundle 的 `Resources/qml/`，直接运行
 `build/NotionRecorder.app` 即可，无需额外设置导入路径。
 
+## 打包分发
+
+```bash
+scripts/package_macos.sh          # 默认打包 build/NotionRecorder.app
+```
+
+脚本会依次：调用 `macdeployqt` 打包 Qt 框架与 QML 插件 → 递归收集并复制
+FFmpeg 及其 Homebrew 传递依赖到 `Contents/Frameworks` → 用
+`install_name_tool` 改链为 `@executable_path` / `@loader_path` → ad-hoc
+签名并校验 → 输出 `dist/NotionRecorder-0.1.0-macos.zip`（约 190MB，自包含）。
+
+注意：ad-hoc 签名未通过 Apple 公证，他人收到后首次打开需右键 →「打开」，
+或执行 `xattr -dr com.apple.quarantine NotionRecorder.app`。
+
 ## 管线自测（无需录屏/麦克风权限）
 
 `pipeline_test` 用合成帧（渐变画面 + 440Hz 正弦音频）走完整编码/封装链路，产出可播放的 MP4：
