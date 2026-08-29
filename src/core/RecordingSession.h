@@ -73,6 +73,13 @@ public:
         long long muxFailures = 0;         // packets the muxer rejected
         long long tapSetupErrors = 0;      // tap fallback setup failures
         std::string sckAudioError;         // SCK audio output registration error
+        std::string sckParseReason;        // first SCK audio parse failure reason
+        long long parseNoFormat = 0;
+        long long parseNoASBD = 0;
+        long long parseNoBufferList = 0;
+        long long parseBufferError = 0;
+        long long parseNoChannels = 0;
+        long long parseNoSamples = 0;
     };
     AudioDebugStats audioDebugStats() const;
 

@@ -18,6 +18,13 @@ public:
         long long audioEmptyDrops = 0;   // buffers dropped after parsing (no samples)
         long long audioSamples = 0;      // total float samples delivered to the app
         std::string audioSetupError;     // addStreamOutput audio error, if any
+        std::string audioParseReason;    // first parse-failure reason, if any
+        long long parseNoFormat = 0;
+        long long parseNoASBD = 0;
+        long long parseNoBufferList = 0;
+        long long parseBufferError = 0;
+        long long parseNoChannels = 0;
+        long long parseNoSamples = 0;
     };
 
     ScreenCaptureKitCapturer();

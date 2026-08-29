@@ -410,11 +410,16 @@ void RecordingSession::audioMixLoop() {
                 std::chrono::seconds(2)) {
             tapStarted_.store(true);
             long long callbacks = -1;
+            long long usableSamples = 0;
             if (auto* sck =
                     dynamic_cast<ScreenCaptureKitCapturer*>(screenCapturer_.get())) {
-                callbacks = sck->audioDebugStats().audioCallbacks;
+                const auto s = sck->audioDebugStats();
+                callbacks = s.audioCallbacks;
+                usableSamples = s.audioSamples;
             }
-            if (callbacks == 0) {
+            // Fall back when SCK delivered no audio at all, or when it
+            // delivered buffers that never parsed into usable samples.
+            if (callbacks == 0 || usableSamples == 0) {
                 if (tapCapturer_->start(
                         config_.audio,
                         [this](AudioFrame f) { onTapSystemAudio(std::move(f)); })) {
@@ -497,6 +502,13 @@ RecordingSession::AudioDebugStats RecordingSession::audioDebugStats() const {
         stats.sckAudioEmptyDrops = s.audioEmptyDrops;
         stats.sckAudioSamples = s.audioSamples;
         stats.sckAudioError = s.audioSetupError;
+        stats.sckParseReason = s.audioParseReason;
+        stats.parseNoFormat = s.parseNoFormat;
+        stats.parseNoASBD = s.parseNoASBD;
+        stats.parseNoBufferList = s.parseNoBufferList;
+        stats.parseBufferError = s.parseBufferError;
+        stats.parseNoChannels = s.parseNoChannels;
+        stats.parseNoSamples = s.parseNoSamples;
     }
 #endif
     return stats;
@@ -522,13 +534,18 @@ void RecordingSession::writeAudioDebugLog() {
     std::fprintf(
         f,
         "%s | %s | sckCallbacks=%lld sckEmptyDrops=%lld sckSamples=%lld "
-        "sckAudioError=\"%s\" | systemFrames=%lld tapFrames=%lld tapActive=%d "
+        "sckAudioError=\"%s\" sckParseReason=\"%s\" "
+        "(noFormat=%lld noASBD=%lld noBufferList=%lld bufferError=%lld "
+        "noChannels=%lld noSamples=%lld) | "
+        "systemFrames=%lld tapFrames=%lld tapActive=%d "
         "tapSetupErrors=%lld | mixPushed=%lld mixDropped=%lld | "
         "encodedFrames=%lld encodeFailures=%lld | encodedPackets=%lld "
         "muxedPackets=%lld muxFailures=%lld\n",
         ts, baseName.c_str(),
         s.sckAudioCallbacks, s.sckAudioEmptyDrops, s.sckAudioSamples,
-        s.sckAudioError.c_str(),
+        s.sckAudioError.c_str(), s.sckParseReason.c_str(),
+        s.parseNoFormat, s.parseNoASBD, s.parseNoBufferList,
+        s.parseBufferError, s.parseNoChannels, s.parseNoSamples,
         s.systemAudioFrames, s.tapFrames, s.tapActive ? 1 : 0, s.tapSetupErrors,
         s.mixPushed, s.mixDropped,
         s.encodedFrames, s.encodeFailures,

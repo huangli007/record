@@ -51,14 +51,18 @@ int runRecordTest(int seconds) {
     fprintf(stderr,
             "[record-test] output=%s\n"
             "[record-test] sckCallbacks=%lld sckEmptyDrops=%lld sckSamples=%lld\n"
-            "[record-test] sckAudioError=\"%s\"\n"
+            "[record-test] sckAudioError=\"%s\" sckParseReason=\"%s\" "
+            "(noFormat=%lld noASBD=%lld noBufferList=%lld bufferError=%lld "
+            "noChannels=%lld noSamples=%lld)\n"
             "[record-test] systemFrames=%lld tapFrames=%lld tapActive=%d tapSetupErrors=%lld\n"
             "[record-test] mixPushed=%lld mixDropped=%lld\n"
             "[record-test] encodedFrames=%lld encodeFailures=%lld\n"
             "[record-test] encodedPackets=%lld muxedPackets=%lld muxFailures=%lld\n",
             session.outputPath().c_str(),
             s.sckAudioCallbacks, s.sckAudioEmptyDrops, s.sckAudioSamples,
-            s.sckAudioError.c_str(),
+            s.sckAudioError.c_str(), s.sckParseReason.c_str(),
+            s.parseNoFormat, s.parseNoASBD, s.parseNoBufferList,
+            s.parseBufferError, s.parseNoChannels, s.parseNoSamples,
             s.systemAudioFrames, s.tapFrames, s.tapActive ? 1 : 0, s.tapSetupErrors,
             s.mixPushed, s.mixDropped,
             s.encodedFrames, s.encodeFailures,

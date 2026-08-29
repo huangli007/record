@@ -39,21 +39,33 @@ SCShareableContent* fetchShareableContentSync() {
     return content;
 }
 
-// Converts a CMSampleBuffer to an interleaved Float32 AudioFrame.
-AudioFrame makeAudioFrame(CMSampleBufferRef sampleBuffer,
-                          AudioSource source,
-                          int volumePercent) {
+// Describes the outcome of parsing an SCK audio CMSampleBuffer.
+struct AudioParseOutcome {
     AudioFrame frame;
+    // Non-null when parsing failed and frame.samples is empty.
+    const char* failure = nullptr;
+};
+
+// Converts a CMSampleBuffer to an interleaved Float32 AudioFrame. Tolerates
+// both interleaved and non-interleaved float32 layouts and reports exactly why
+// a buffer could not be parsed (for diagnostics).
+AudioParseOutcome makeAudioFrame(CMSampleBufferRef sampleBuffer,
+                                 AudioSource source,
+                                 int volumePercent) {
+    AudioParseOutcome outcome;
+    AudioFrame& frame = outcome.frame;
     frame.source = source;
 
     CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sampleBuffer);
     if (!format) {
-        return frame;
+        outcome.failure = "no-format";
+        return outcome;
     }
     const AudioStreamBasicDescription* asbd =
         CMAudioFormatDescriptionGetStreamBasicDescription(format);
     if (!asbd) {
-        return frame;
+        outcome.failure = "no-asbd";
+        return outcome;
     }
 
     frame.sampleRate = static_cast<int>(asbd->mSampleRate);
@@ -75,7 +87,8 @@ AudioFrame makeAudioFrame(CMSampleBufferRef sampleBuffer,
     CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
         sampleBuffer, &ablSize, nullptr, 0, kCFAllocatorNull, kCFAllocatorNull, 0, nullptr);
     if (ablSize == 0) {
-        return frame;
+        outcome.failure = "no-buffer-list";
+        return outcome;
     }
     abl = static_cast<AudioBufferList*>(malloc(ablSize));
     const OSStatus status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
@@ -86,22 +99,69 @@ AudioFrame makeAudioFrame(CMSampleBufferRef sampleBuffer,
         if (blockBuffer) {
             CFRelease(blockBuffer);
         }
-        return frame;
+        outcome.failure = "buffer-error";
+        return outcome;
     }
 
-    const CMItemCount numSamples = CMSampleBufferGetNumSamples(sampleBuffer);
-    const int channels = frame.channels;
-    if (channels > 0 && numSamples > 0) {
+    // Determine channel count, tolerating ASBDs that leave it at 0.
+    int channels = frame.channels;
+    if (channels <= 0) {
+        channels = static_cast<int>(abl->mNumberBuffers);
+    }
+    if (channels <= 0) {
+        channels = static_cast<int>(abl->mBuffers[0].mNumberChannels);
+    }
+    frame.channels = channels;
+
+    // Determine sample count, tolerating CMSampleBufferGetNumSamples() == 0.
+    CMItemCount numSamples = CMSampleBufferGetNumSamples(sampleBuffer);
+    const bool interleaved =
+        abl->mNumberBuffers == 1 &&
+        abl->mBuffers[0].mNumberChannels == static_cast<UInt32>(channels);
+    const UInt32 bytesPerSample =
+        (asbd->mBitsPerChannel > 0 ? asbd->mBitsPerChannel : 32) / 8;
+    if (numSamples <= 0) {
+        if (interleaved) {
+            numSamples = abl->mBuffers[0].mDataByteSize /
+                         (static_cast<UInt32>(channels) * bytesPerSample);
+        } else {
+            for (UInt32 i = 0; i < abl->mNumberBuffers; ++i) {
+                const UInt32 n =
+                    abl->mBuffers[i].mDataByteSize / bytesPerSample;
+                if (n > numSamples) {
+                    numSamples = n;
+                }
+            }
+        }
+    }
+
+    if (channels <= 0 || numSamples <= 0) {
+        outcome.failure = channels <= 0 ? "no-channels" : "no-samples";
+    } else {
         frame.samples.resize(static_cast<size_t>(numSamples) * channels);
         const float volume = static_cast<float>(volumePercent) / 100.0f;
+        const bool isFloat =
+            (asbd->mFormatFlags & kAudioFormatFlagIsFloat) != 0 ||
+            asbd->mBitsPerChannel == 32;
 
-        if (abl->mNumberBuffers == 1 &&
-            abl->mBuffers[0].mNumberChannels == channels) {
-            // Interleaved input.
-            const float* data = static_cast<const float*>(abl->mBuffers[0].mData);
-            if (data) {
-                for (CMItemCount i = 0; i < numSamples * channels; ++i) {
-                    frame.samples[i] = data[i] * volume;
+        if (interleaved) {
+            if (isFloat) {
+                const float* data =
+                    static_cast<const float*>(abl->mBuffers[0].mData);
+                if (data) {
+                    for (CMItemCount i = 0; i < numSamples * channels; ++i) {
+                        frame.samples[i] = data[i] * volume;
+                    }
+                }
+            } else {
+                // SInt16 interleaved (defensive; SCK is float32).
+                const int16_t* data =
+                    static_cast<const int16_t*>(abl->mBuffers[0].mData);
+                if (data) {
+                    for (CMItemCount i = 0; i < numSamples * channels; ++i) {
+                        frame.samples[i] =
+                            static_cast<float>(data[i]) / 32768.0f * volume;
+                    }
                 }
             }
         } else {
@@ -111,12 +171,25 @@ AudioFrame makeAudioFrame(CMSampleBufferRef sampleBuffer,
                     float sample = 0.0f;
                     if (ch < static_cast<int>(abl->mNumberBuffers)) {
                         const AudioBuffer& buf = abl->mBuffers[ch];
-                        const float* data = static_cast<const float*>(buf.mData);
-                        if (data && buf.mDataByteSize >= (i + 1) * sizeof(float)) {
-                            sample = data[i];
+                        if (isFloat) {
+                            const float* data =
+                                static_cast<const float*>(buf.mData);
+                            if (data && buf.mDataByteSize >=
+                                            (i + 1) * sizeof(float)) {
+                                sample = data[i];
+                            }
+                        } else {
+                            const int16_t* data =
+                                static_cast<const int16_t*>(buf.mData);
+                            if (data && buf.mDataByteSize >=
+                                            (i + 1) * sizeof(int16_t)) {
+                                sample =
+                                    static_cast<float>(data[i]) / 32768.0f;
+                            }
                         }
                     }
-                    frame.samples[static_cast<size_t>(i) * channels + ch] = sample * volume;
+                    frame.samples[static_cast<size_t>(i) * channels + ch] =
+                        sample * volume;
                 }
             }
         }
@@ -126,7 +199,7 @@ AudioFrame makeAudioFrame(CMSampleBufferRef sampleBuffer,
     if (blockBuffer) {
         CFRelease(blockBuffer);
     }
-    return frame;
+    return outcome;
 }
 
 } // namespace
@@ -153,6 +226,13 @@ struct ScreenCaptureKitCapturer::Impl {
     std::atomic<long long> audioSamples{0};
     std::mutex audioSetupMutex;
     std::string audioSetupError;
+    std::string audioParseReason;
+    std::atomic<long long> audioParseNoFormat{0};
+    std::atomic<long long> audioParseNoASBD{0};
+    std::atomic<long long> audioParseNoBufferList{0};
+    std::atomic<long long> audioParseBufferError{0};
+    std::atomic<long long> audioParseNoChannels{0};
+    std::atomic<long long> audioParseNoSamples{0};
     std::mutex errorMutex;
     std::mutex restartMutex;
     dispatch_queue_t restartQueue = nullptr;
@@ -192,6 +272,28 @@ struct ScreenCaptureKitCapturer::Impl {
     void emitAudio(AudioFrame frame) {
         if (onAudio) {
             onAudio(std::move(frame));
+        }
+    }
+
+    void recordAudioParseFailure(const char* reason) {
+        {
+            std::lock_guard<std::mutex> lock(audioSetupMutex);
+            if (audioParseReason.empty() && reason) {
+                audioParseReason = reason;
+            }
+        }
+        if (std::strcmp(reason, "no-format") == 0) {
+            audioParseNoFormat.fetch_add(1);
+        } else if (std::strcmp(reason, "no-asbd") == 0) {
+            audioParseNoASBD.fetch_add(1);
+        } else if (std::strcmp(reason, "no-buffer-list") == 0) {
+            audioParseNoBufferList.fetch_add(1);
+        } else if (std::strcmp(reason, "buffer-error") == 0) {
+            audioParseBufferError.fetch_add(1);
+        } else if (std::strcmp(reason, "no-channels") == 0) {
+            audioParseNoChannels.fetch_add(1);
+        } else if (std::strcmp(reason, "no-samples") == 0) {
+            audioParseNoSamples.fetch_add(1);
         }
     }
 };
@@ -244,19 +346,22 @@ struct ScreenCaptureKitCapturer::Impl {
         impl->emitVideo(std::move(frame));
     } else if (type == SCStreamOutputTypeAudio) {
         impl->audioCallbacks.fetch_add(1);
-        nr::AudioFrame audio =
-            nr::makeAudioFrame(sampleBuffer, nr::AudioSource::System, impl->volume());
-        if (audio.samples.empty()) {
+        nr::AudioParseOutcome parsed = nr::makeAudioFrame(
+            sampleBuffer, nr::AudioSource::System, impl->volume());
+        if (parsed.frame.samples.empty()) {
             impl->audioEmptyDrops.fetch_add(1);
+            if (parsed.failure) {
+                impl->recordAudioParseFailure(parsed.failure);
+            }
             return;
         }
         impl->audioSamples.fetch_add(
-            static_cast<long long>(audio.samples.size()));
-        if (impl->audioBase() == 0 && audio.ptsUs != 0) {
-            impl->audioBaseUs.store(audio.ptsUs);
+            static_cast<long long>(parsed.frame.samples.size()));
+        if (impl->audioBase() == 0 && parsed.frame.ptsUs != 0) {
+            impl->audioBaseUs.store(parsed.frame.ptsUs);
         }
-        audio.ptsUs -= impl->audioBase();
-        impl->emitAudio(std::move(audio));
+        parsed.frame.ptsUs -= impl->audioBase();
+        impl->emitAudio(std::move(parsed.frame));
     }
 }
 
@@ -573,7 +678,14 @@ ScreenCaptureKitCapturer::audioDebugStats() const {
         {
             std::lock_guard<std::mutex> lock(impl_->audioSetupMutex);
             stats.audioSetupError = impl_->audioSetupError;
+            stats.audioParseReason = impl_->audioParseReason;
         }
+        stats.parseNoFormat = impl_->audioParseNoFormat.load();
+        stats.parseNoASBD = impl_->audioParseNoASBD.load();
+        stats.parseNoBufferList = impl_->audioParseNoBufferList.load();
+        stats.parseBufferError = impl_->audioParseBufferError.load();
+        stats.parseNoChannels = impl_->audioParseNoChannels.load();
+        stats.parseNoSamples = impl_->audioParseNoSamples.load();
     }
     return stats;
 }
