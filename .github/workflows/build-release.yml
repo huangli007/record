@@ -1,0 +1,94 @@
+name: build-release
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.2'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Download FFmpeg (shared build)
+        shell: pwsh
+        run: |
+          $url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full-shared.7z"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\ffmpeg.7z"
+          7z x "$env:RUNNER_TEMP\ffmpeg.7z" -o"$env:RUNNER_TEMP\ffmpeg" -y | Out-Null
+          $dir = Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" -Directory | Select-Object -First 1
+          echo "FFMPEG_DIR=$($dir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DFFMPEG_DIR="$env:FFMPEG_DIR"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Deploy Qt runtime
+        shell: pwsh
+        run: |
+          & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations build\Release\NotionRecorder.exe
+
+      - name: Stage package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "$env:FFMPEG_DIR\bin\*.dll" build\Release\ -Force
+          Compress-Archive -Path build\Release\* -DestinationPath dist\NotionRecorder-win64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NotionRecorder-win64
+          path: dist/NotionRecorder-win64.zip
+
+      - name: Attach to release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/NotionRecorder-win64.zip
+
+  macos:
+    name: macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt and FFmpeg
+        run: |
+          brew install qt ffmpeg
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j3
+
+      - name: Package
+        run: |
+          bash scripts/package_macos.sh build/NotionRecorder.app
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NotionRecorder-macos
+          path: dist/NotionRecorder-*-macos.zip
+
+      - name: Attach to release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/NotionRecorder-*-macos.zip

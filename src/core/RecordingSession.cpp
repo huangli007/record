@@ -10,11 +10,21 @@
 
 #if defined(__APPLE__)
 #include <CoreGraphics/CoreGraphics.h>
-#endif
-
 #include "capture/macos/CoreAudioCapturer.h"
 #include "capture/macos/CoreAudioTapCapturer.h"
 #include "capture/macos/ScreenCaptureKitCapturer.h"
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include "capture/windows/DXGICapturer.h"
+#include "capture/windows/WASAPICapturer.h"
+#endif
+
 #include "codec/EncoderFactory.h"
 #include "core/TimeBase.h"
 
@@ -24,14 +34,16 @@ namespace {
 
 std::string expandPath(const std::string& path) {
     std::string result = path;
-#if !defined(_WIN32)
     if (!result.empty() && result[0] == '~') {
+#if defined(_WIN32)
+        const char* home = std::getenv("USERPROFILE");
+#else
         const char* home = std::getenv("HOME");
+#endif
         if (home) {
             result.replace(0, 1, home);
         }
     }
-#endif
     return result;
 }
 
@@ -90,6 +102,12 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
     }
     // CaptureMode::Window keeps config_.video.width/height as set by the
     // window picker (the capturer re-verifies the window at start).
+#elif defined(_WIN32)
+    if (config_.video.mode == CaptureMode::FullScreen &&
+        (config_.video.width <= 0 || config_.video.height <= 0)) {
+        config_.video.width = GetSystemMetrics(SM_CXSCREEN);
+        config_.video.height = GetSystemMetrics(SM_CYSCREEN);
+    }
 #endif
     if (config_.video.width <= 0 || config_.video.height <= 0) {
         config_.video.width = 1920;
@@ -101,11 +119,19 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
     std::filesystem::create_directories(dir, ec);
     outputPath_ = (std::filesystem::path(dir) / config_.defaultFileName()).string();
 
+#if defined(__APPLE__)
     screenCapturer_ = std::make_unique<ScreenCaptureKitCapturer>();
     micCapturer_ =
         config_.audio.captureMicrophone ? std::make_unique<CoreAudioCapturer>() : nullptr;
     tapCapturer_ =
         config_.audio.captureSystemAudio ? std::make_unique<CoreAudioTapCapturer>() : nullptr;
+#elif defined(_WIN32)
+    screenCapturer_ = std::make_unique<DXGICapturer>();
+    micCapturer_ =
+        config_.audio.captureMicrophone ? std::make_unique<WASAPICapturer>(false) : nullptr;
+    tapCapturer_ =
+        config_.audio.captureSystemAudio ? std::make_unique<WASAPICapturer>(true) : nullptr;
+#endif
     tapAudioActive_.store(false);
     tapStarted_.store(false);
     tapFrames_.store(0);
@@ -160,12 +186,30 @@ bool RecordingSession::start(const RecordingConfig& config, StateCallback onStat
             config_.video, config_.audio,
             [this](VideoFrame f) { onVideoFrame(std::move(f)); },
             [this](AudioFrame f) { onSystemAudio(std::move(f)); })) {
+#if defined(__APPLE__)
         lastError_ = "无法启动屏幕采集，请检查“屏幕录制”权限（系统设置 → 隐私与安全性）";
+#else
+        lastError_ = "无法启动屏幕采集";
+#endif
         running_.store(false);
         cleanupQueues();
         setState(State::Error);
         return false;
     }
+
+#if defined(_WIN32)
+    // On Windows the system audio loopback runs from the start (no SCK).
+    if (tapCapturer_ && config_.audio.captureSystemAudio) {
+        tapStarted_.store(true);
+        if (tapCapturer_->start(
+                config_.audio,
+                [this](AudioFrame f) { onTapSystemAudio(std::move(f)); })) {
+            tapAudioActive_.store(true);
+        } else {
+            std::fprintf(stderr, "[rec] 系统音频（WASAPI 回环）启动失败\n");
+        }
+    }
+#endif
 
     if (micCapturer_) {
         if (!micCapturer_->start(config_.audio,
@@ -400,6 +444,7 @@ void RecordingSession::audioMixLoop() {
             pushAudio(std::move(*mic));
         }
 
+#if defined(__APPLE__)
         // Watchdog: if SCK was configured to capture system audio but has not
         // delivered a single audio buffer within 2 seconds (a known failure
         // mode on macOS 14.4+ depending on the granted privacy permission),
@@ -434,6 +479,7 @@ void RecordingSession::audioMixLoop() {
                 }
             }
         }
+#endif
     }
 }
 
@@ -490,12 +536,12 @@ RecordingSession::AudioDebugStats RecordingSession::audioDebugStats() const {
     stats.encodedPackets = encodedPackets_.load();
     stats.muxedPackets = muxedPackets_.load();
     stats.muxFailures = muxFailures_.load();
+#if defined(__APPLE__)
     if (tapCapturer_) {
         if (auto* tap = dynamic_cast<CoreAudioTapCapturer*>(tapCapturer_.get())) {
             stats.tapSetupErrors = tap->stats().setupErrors;
         }
     }
-#if defined(__APPLE__)
     if (auto* sck = dynamic_cast<ScreenCaptureKitCapturer*>(screenCapturer_.get())) {
         const auto s = sck->audioDebugStats();
         stats.sckAudioCallbacks = s.audioCallbacks;

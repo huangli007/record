@@ -8,9 +8,21 @@ namespace nr {
 
 bool EncoderFactory::hardwareAvailable(const std::string& codec) {
     if (codec == "h265") {
+#if defined(__APPLE__)
         return avcodec_find_encoder_by_name("hevc_videotoolbox") != nullptr;
+#else
+        return avcodec_find_encoder_by_name("hevc_nvenc") != nullptr ||
+               avcodec_find_encoder_by_name("hevc_qsv") != nullptr ||
+               avcodec_find_encoder_by_name("hevc_amf") != nullptr;
+#endif
     }
+#if defined(__APPLE__)
     return avcodec_find_encoder_by_name("h264_videotoolbox") != nullptr;
+#else
+    return avcodec_find_encoder_by_name("h264_nvenc") != nullptr ||
+           avcodec_find_encoder_by_name("h264_qsv") != nullptr ||
+           avcodec_find_encoder_by_name("h264_amf") != nullptr;
+#endif
 }
 
 std::unique_ptr<VideoEncoder> EncoderFactory::createVideoEncoder(const VideoConfig& config) {

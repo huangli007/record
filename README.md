@@ -193,6 +193,15 @@ CoreAudio（麦克风）────────────────┘
 SCK 音频回调数、Tap 兜底是否启用、混音/编码/封装各环节的帧计数与失败数。
 若再次遇到无声问题，把该文件内容发来即可快速定位是哪一环丢失了音频。
 
+## Windows 版本
+
+Windows 平台层（DXGI/GDI 屏幕采集、WASAPI 系统声音回环与麦克风、NVENC/QSV/AMF
+硬件编码、Ctrl+Shift+R/P 全局热键、可移植 FFT 降噪）已实现，并通过 CMake 的
+`WIN32` 分支接入。本机为 macOS，无法直接产出 Windows 安装包；仓库内附
+`.github/workflows/build-release.yml`：推送到 GitHub 后，Actions 会在
+Windows 服务器上自动编译并产出 exe 压缩包，打 `v*` 标签时自动发布
+Windows 与 macOS 两个平台的包到 Releases。
+
 ## 文档对照
 
 | 架构文档章节 | 实现状态 |

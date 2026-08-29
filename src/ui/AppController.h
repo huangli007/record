@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QAbstractNativeEventFilter>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -17,7 +18,7 @@ struct WindowInfo;
 
 // Bridges the recording core to QML. Owns the session and exposes the current
 // configuration as invokables so the Notion-style UI stays declarative.
-class AppController : public QObject {
+class AppController : public QObject, public QAbstractNativeEventFilter {
     Q_OBJECT
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(bool recording READ isRecording NOTIFY stateChanged)
@@ -57,6 +58,9 @@ class AppController : public QObject {
 public:
     explicit AppController(QObject* parent = nullptr);
     ~AppController() override;
+
+    bool nativeEventFilter(const QByteArray& eventType, void* message,
+                           qintptr* result) override;
 
     QString statusText() const;
     bool isRecording() const;
@@ -152,10 +156,11 @@ private:
     QString lastFilePath_;
     QString errorMessage_;
 
-    // Global hotkeys (Carbon EventHotKey): ⌘⇧R start/stop, ⌘⇧P pause.
+    // Global hotkeys: ⌘⇧R / Ctrl+Shift+R start-stop, ⌘⇧P / Ctrl+Shift+P pause.
     void* hotKeyEventHandlerRef_ = nullptr;
     void* hotKeyToggleRef_ = nullptr;
     void* hotKeyPauseRef_ = nullptr;
+    bool hotkeysInstalled_ = false;
 
     // CPU sampling state.
     long long lastUserTicks_ = 0;

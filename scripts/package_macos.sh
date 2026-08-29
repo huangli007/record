@@ -23,8 +23,12 @@ fi
 mkdir -p "$FW" "$OUT"
 
 echo "==> macdeployqt (Qt frameworks + QML)"
-if [[ -x /opt/homebrew/opt/qt/bin/macdeployqt ]]; then
-    /opt/homebrew/opt/qt/bin/macdeployqt "$APP" \
+MACDEPLOYQT="$(command -v macdeployqt 2>/dev/null || true)"
+if [[ -z "$MACDEPLOYQT" && -x "$(brew --prefix 2>/dev/null)/opt/qt/bin/macdeployqt" ]]; then
+    MACDEPLOYQT="$(brew --prefix)/opt/qt/bin/macdeployqt"
+fi
+if [[ -x "$MACDEPLOYQT" ]]; then
+    "$MACDEPLOYQT" "$APP" \
         -qmldir="$ROOT/src/ui/qml" >/dev/null 2>&1 || true
 else
     echo "    macdeployqt not found, skipping (expect broken bundle)" >&2

@@ -8,7 +8,11 @@
 namespace nr {
 
 RecordingConfig RecordingConfig::defaults() {
-    return RecordingConfig{};
+    RecordingConfig config;
+#if defined(_WIN32)
+    config.general.outputDir = "~/Videos/NotionRecorder";
+#endif
+    return config;
 }
 
 std::string RecordingConfig::defaultFileName() const {

@@ -1,0 +1,334 @@
+#include "capture/windows/WASAPICapturer.h"
+
+#if !defined(_WIN32)
+#error "WASAPICapturer is Windows-only"
+#endif
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <audioclient.h>
+#include <mmdeviceapi.h>
+#include <functiondiscoverykeys_devpkey.h>
+#include <ksmedia.h>
+
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <thread>
+#include <vector>
+
+#include "capture/AudioFrame.h"
+
+namespace nr {
+
+struct WASAPICapturer::Impl {
+    bool loopback = false;
+    AudioConfig config;
+    AudioFrameCallback onFrame;
+    std::atomic<bool> running{false};
+    std::atomic<bool> paused{false};
+    std::atomic<float> volume{1.0f};
+    std::thread captureThread;
+
+    IAudioClient* audioClient = nullptr;
+    IAudioCaptureClient* captureClient = nullptr;
+    IMMDevice* device = nullptr;
+    bool comInitialized = false;
+
+    int sampleRate = 48000;
+    int channels = 2;
+    int bytesPerSample = 4;
+    int validBits = 32;
+    bool isFloat = true;
+
+    std::vector<float> resampleScratch;
+    int64_t samplesConsumed = 0;
+
+    ~Impl() = default;
+
+    void cleanup() {
+        if (audioClient) {
+            audioClient->Stop();
+        }
+        if (captureClient) {
+            captureClient->Release();
+            captureClient = nullptr;
+        }
+        if (audioClient) {
+            audioClient->Release();
+            audioClient = nullptr;
+        }
+        if (device) {
+            device->Release();
+            device = nullptr;
+        }
+        if (comInitialized) {
+            CoUninitialize();
+            comInitialized = false;
+        }
+    }
+
+    bool startClient() {
+        if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {
+            return false;
+        }
+        comInitialized = true;
+
+        IMMDeviceEnumerator* enumerator = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr,
+                                    CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) {
+            return false;
+        }
+
+        const EDataFlow flow = loopback ? eRender : eCapture;
+        const HRESULT hr = enumerator->GetDefaultAudioEndpoint(
+            flow, eConsole, &device);
+        enumerator->Release();
+        if (FAILED(hr) || !device) {
+            return false;
+        }
+
+        if (FAILED(device->Activate(IID_IAudioClient, CLSCTX_ALL, nullptr,
+                                    reinterpret_cast<void**>(&audioClient)))) {
+            return false;
+        }
+
+        WAVEFORMATEX* mixFormat = nullptr;
+        if (FAILED(audioClient->GetMixFormat(&mixFormat))) {
+            return false;
+        }
+        sampleRate = static_cast<int>(mixFormat->nSamplesPerSec);
+        channels = static_cast<int>(mixFormat->nChannels);
+
+        WAVEFORMATEXTENSIBLE* ext =
+            reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mixFormat);
+        if (mixFormat->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+            ext->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) {
+            isFloat = true;
+            bytesPerSample = mixFormat->wBitsPerSample / 8;
+            validBits = ext->Samples.wValidBitsPerSample;
+        } else if (mixFormat->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                   ext->SubFormat == KSDATAFORMAT_SUBTYPE_PCM) {
+            isFloat = false;
+            bytesPerSample = mixFormat->wBitsPerSample / 8;
+            validBits = ext->Samples.wValidBitsPerSample;
+        } else if (mixFormat->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) {
+            isFloat = true;
+            bytesPerSample = mixFormat->wBitsPerSample / 8;
+            validBits = mixFormat->wBitsPerSample;
+        } else {
+            isFloat = false;
+            bytesPerSample = mixFormat->wBitsPerSample / 8;
+            validBits = mixFormat->wBitsPerSample;
+        }
+        if (bytesPerSample <= 0) {
+            bytesPerSample = 4;
+        }
+        if (validBits <= 0) {
+            validBits = bytesPerSample * 8;
+        }
+
+        // 100 ms buffer, shared mode (loopback requires shared mode).
+        const REFERENCE_TIME bufferDuration = 10000000LL / 10;
+        const DWORD flags = loopback ? AUDCLNT_STREAMFLAGS_LOOPBACK : 0;
+        HRESULT initHr = audioClient->Initialize(
+            AUDCLNT_SHAREMODE_SHARED, flags, bufferDuration, 0, mixFormat, nullptr);
+        CoTaskMemFree(mixFormat);
+        if (FAILED(initHr)) {
+            return false;
+        }
+
+        if (FAILED(audioClient->GetService(
+                IID_PPV_ARGS(&captureClient)))) {
+            return false;
+        }
+        if (FAILED(audioClient->Start())) {
+            return false;
+        }
+        return true;
+    }
+
+    // Converts one interleaved buffer into float32 interleaved (native rate).
+    std::vector<float> convert(const BYTE* data, UINT32 frames, UINT32 frameSize) {
+        std::vector<float> out(static_cast<size_t>(frames) * channels);
+        const int srcChannels = channels;
+        if (isFloat && bytesPerSample == 4) {
+            const auto* src = reinterpret_cast<const float*>(data);
+            for (UINT32 i = 0; i < frames * static_cast<UINT32>(srcChannels); ++i) {
+                out[i] = src[i];
+            }
+        } else if (!isFloat && bytesPerSample == 2) {
+            const auto* src = reinterpret_cast<const int16_t*>(data);
+            for (UINT32 i = 0; i < frames * static_cast<UINT32>(srcChannels); ++i) {
+                out[i] = static_cast<float>(src[i]) / 32768.0f;
+            }
+        } else if (!isFloat && bytesPerSample == 4) {
+            const auto* src = reinterpret_cast<const int32_t*>(data);
+            const float scale = 1.0f / static_cast<float>(1u << (validBits - 1));
+            for (UINT32 i = 0; i < frames * static_cast<UINT32>(srcChannels); ++i) {
+                out[i] = static_cast<float>(src[i]) * scale;
+            }
+        } else if (!isFloat && bytesPerSample == 3) {
+            const auto* src = data;
+            const float scale = 1.0f / static_cast<float>(1u << (validBits - 1));
+            for (UINT32 i = 0; i < frames * static_cast<UINT32>(srcChannels); ++i) {
+                int32_t v = (src[i * 3]) | (src[i * 3 + 1] << 8) |
+                            (src[i * 3 + 2] << 16);
+                if (v & 0x800000) {
+                    v |= ~0xFFFFFF;  // sign-extend
+                }
+                out[i] = static_cast<float>(v) * scale;
+            }
+        } else {
+            // Unknown layout: treat as float32 if big enough, else silence.
+            if (bytesPerSample >= 4) {
+                const auto* src = reinterpret_cast<const float*>(data);
+                for (UINT32 i = 0; i < frames * static_cast<UINT32>(srcChannels); ++i) {
+                    out[i] = src[i];
+                }
+            }
+        }
+        (void)frameSize;
+        return out;
+    }
+
+    // Linear-interpolation resampler: native rate -> 48 kHz stereo.
+    void resampleTo48k(const std::vector<float>& in, std::vector<float>& out,
+                       int frames) {
+        const int inCh = channels > 0 ? channels : 2;
+        const int targetRate = 48000;
+        if (sampleRate == targetRate) {
+            out.assign(in.begin(), in.end());
+            return;
+        }
+        const int64_t outFrames =
+            static_cast<int64_t>(frames) * targetRate / sampleRate;
+        out.resize(static_cast<size_t>(outFrames) * 2);
+        for (int64_t o = 0; o < outFrames; ++o) {
+            const double pos = static_cast<double>(o) * sampleRate / targetRate;
+            const int64_t i0 = static_cast<int64_t>(pos);
+            const int64_t i1 = std::min<int64_t>(i0 + 1, frames - 1);
+            const float frac = static_cast<float>(pos - i0);
+            for (int ch = 0; ch < 2; ++ch) {
+                const int srcCh = std::min(ch, inCh - 1);
+                const float a = in[static_cast<size_t>(i0) * inCh + srcCh];
+                const float b = in[static_cast<size_t>(i1) * inCh + srcCh];
+                out[static_cast<size_t>(o) * 2 + ch] = a + frac * (b - a);
+            }
+        }
+    }
+
+    void captureLoop() {
+        const int sleepMs = 5;
+        while (running.load()) {
+            UINT32 packetLength = 0;
+            if (FAILED(captureClient->GetNextPacketSize(&packetLength))) {
+                break;
+            }
+            if (packetLength == 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+                continue;
+            }
+
+            BYTE* data = nullptr;
+            UINT32 frames = 0;
+            DWORD flags = 0;
+            const HRESULT hr = captureClient->GetBuffer(
+                &data, &frames, &flags, nullptr, nullptr);
+            if (FAILED(hr) || !data || frames == 0) {
+                captureClient->ReleaseBuffer(frames);
+                std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+                continue;
+            }
+
+            if (!paused.load() && onFrame) {
+                std::vector<float> native = convert(data, frames, 0);
+                std::vector<float> stereo;
+                resampleTo48k(native, stereo, static_cast<int>(frames));
+                if (!stereo.empty()) {
+                    AudioFrame frame;
+                    frame.source = loopback ? AudioSource::System
+                                            : AudioSource::Microphone;
+                    frame.sampleRate = 48000;
+                    frame.channels = 2;
+                    const int64_t counter = samplesConsumed;
+                    frame.ptsUs = counter * 1'000'000LL / 48000;
+                    frame.durationUs =
+                        static_cast<int64_t>(stereo.size() / 2) * 1'000'000LL /
+                        48000;
+                    samplesConsumed += static_cast<int64_t>(stereo.size() / 2);
+                    frame.samples = std::move(stereo);
+                    const float vol = volume.load();
+                    if (vol != 1.0f) {
+                        for (float& s : frame.samples) {
+                            s *= vol;
+                        }
+                    }
+                    onFrame(std::move(frame));
+                }
+            } else if (frames > 0) {
+                samplesConsumed += frames;
+            }
+            captureClient->ReleaseBuffer(frames);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+};
+
+WASAPICapturer::WASAPICapturer(bool loopback) : impl_(std::make_unique<Impl>()) {
+    impl_->loopback = loopback;
+}
+
+WASAPICapturer::~WASAPICapturer() {
+    stop();
+}
+
+bool WASAPICapturer::start(const AudioConfig& config,
+                           AudioFrameCallback onFrame) {
+    if (!impl_) {
+        return false;
+    }
+    stop();
+    impl_->config = config;
+    impl_->onFrame = std::move(onFrame);
+    impl_->volume.store(static_cast<float>(
+        (impl_->loopback ? config.systemVolume : config.micVolume)) / 100.0f);
+    impl_->paused.store(false);
+    impl_->samplesConsumed = 0;
+
+    if (!impl_->startClient()) {
+        impl_->cleanup();
+        impl_->onFrame = nullptr;
+        return false;
+    }
+    impl_->running.store(true);
+    impl_->captureThread = std::thread([this] { impl_->captureLoop(); });
+    return true;
+}
+
+void WASAPICapturer::stop() {
+    if (!impl_) {
+        return;
+    }
+    impl_->running.store(false);
+    if (impl_->captureThread.joinable()) {
+        impl_->captureThread.join();
+    }
+    impl_->cleanup();
+    impl_->onFrame = nullptr;
+}
+
+void WASAPICapturer::setPaused(bool paused) {
+    if (impl_) {
+        impl_->paused.store(paused);
+    }
+}
+
+} // namespace nr

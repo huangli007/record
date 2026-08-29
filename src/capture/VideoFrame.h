@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #if defined(__APPLE__)
 #include <CoreMedia/CoreMedia.h>
@@ -9,12 +10,14 @@
 
 namespace nr {
 
-// A single raw video frame. On macOS it wraps a retained CVPixelBuffer.
+// A single raw video frame. On macOS it wraps a retained CVPixelBuffer; on
+// other platforms (Windows) it carries a BGRA byte buffer.
 struct VideoFrame {
 #if defined(__APPLE__)
     CVPixelBufferRef pixelBuffer = nullptr;
 #else
-    void* nativeBuffer = nullptr;
+    std::vector<uint8_t> bgra;  // BGRA rows, tightly packed
+    int stride = 0;             // bytes per row (bgra.size() / height)
 #endif
     int64_t ptsUs = 0;        // microsecond timeline (TimeBase)
     double durationUs = 0;    // expected frame duration

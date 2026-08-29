@@ -10,14 +10,6 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment ta
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Quick Qml)
 qt_policy(SET QTP0004 NEW)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
-    libavformat
-    libavcodec
-    libavutil
-    libswscale
-    libswresample
-)
 
 qt_add_executable(NotionRecorder
     src/main.cpp
@@ -33,12 +25,6 @@ qt_add_executable(NotionRecorder
     src/core/TimeBase.h
     src/capture/ScreenCapturer.h
     src/capture/AudioCapturer.h
-    src/capture/macos/ScreenCaptureKitCapturer.mm
-    src/capture/macos/ScreenCaptureKitCapturer.h
-    src/capture/macos/CoreAudioCapturer.mm
-    src/capture/macos/CoreAudioCapturer.h
-    src/capture/macos/CoreAudioTapCapturer.mm
-    src/capture/macos/CoreAudioTapCapturer.h
     src/codec/VideoEncoder.cpp
     src/codec/VideoEncoder.h
     src/codec/AudioEncoder.cpp
@@ -49,34 +35,54 @@ qt_add_executable(NotionRecorder
     src/mux/Muxer.h
 )
 
-target_include_directories(NotionRecorder PRIVATE
-    src
-    ${FFMPEG_INCLUDE_DIRS}
-)
-
-target_compile_definitions(NotionRecorder PRIVATE
-    ${FFMPEG_CFLAGS_OTHER}
-    QT_NO_KEYWORDS
-)
-
-target_link_libraries(NotionRecorder PRIVATE
-    Qt6::Quick
-    Qt6::Qml
-    PkgConfig::FFMPEG
-    "-framework ScreenCaptureKit"
-    "-framework CoreMedia"
-    "-framework CoreVideo"
-    "-framework CoreAudio"
-    "-framework AudioToolbox"
-    "-framework VideoToolbox"
-    "-framework Foundation"
-    "-framework AppKit"
-    "-framework Carbon"
-    "-framework Accelerate"
-)
-
-# Self-test: synthetic frames -> encode -> fragmented MP4 (no screen/mic access).
 if(APPLE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+        libavformat
+        libavcodec
+        libavutil
+        libswscale
+        libswresample
+    )
+    target_sources(NotionRecorder PRIVATE
+        src/capture/macos/ScreenCaptureKitCapturer.mm
+        src/capture/macos/ScreenCaptureKitCapturer.h
+        src/capture/macos/CoreAudioCapturer.mm
+        src/capture/macos/CoreAudioCapturer.h
+        src/capture/macos/CoreAudioTapCapturer.mm
+        src/capture/macos/CoreAudioTapCapturer.h
+    )
+    target_include_directories(NotionRecorder PRIVATE
+        src
+        ${FFMPEG_INCLUDE_DIRS}
+    )
+    target_compile_definitions(NotionRecorder PRIVATE
+        ${FFMPEG_CFLAGS_OTHER}
+        QT_NO_KEYWORDS
+    )
+    target_link_libraries(NotionRecorder PRIVATE
+        Qt6::Quick
+        Qt6::Qml
+        PkgConfig::FFMPEG
+        "-framework ScreenCaptureKit"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework CoreAudio"
+        "-framework AudioToolbox"
+        "-framework VideoToolbox"
+        "-framework Foundation"
+        "-framework AppKit"
+        "-framework Carbon"
+        "-framework Accelerate"
+    )
+    set_source_files_properties(
+        src/capture/macos/ScreenCaptureKitCapturer.mm
+        src/capture/macos/CoreAudioCapturer.mm
+        src/capture/macos/CoreAudioTapCapturer.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc"
+    )
+
+    # Self-test: synthetic frames -> encode -> fragmented MP4.
     add_executable(pipeline_test
         tests/pipeline_test.cpp
         src/codec/VideoEncoder.cpp
@@ -91,9 +97,7 @@ if(APPLE)
         "-framework CoreMedia"
         "-framework Foundation"
     )
-endif()
 
-if(APPLE)
     # Denoiser self-test: verifies SNR improvement on synthetic noisy tone.
     add_executable(denoise_test
         tests/denoise_test.cpp
@@ -122,6 +126,63 @@ if(APPLE)
         Qt6::Quick
         Qt6::Qml
     )
+
+    # Deploy the generated QML module directory into the bundle so the app
+    # runs from build/NotionRecorder.app without extra import paths.
+    add_custom_command(TARGET NotionRecorder POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/NotionRecorder"
+            "$<TARGET_BUNDLE_CONTENT_DIR:NotionRecorder>/Resources/qml/NotionRecorder"
+        COMMENT "Deploying QML module into app bundle"
+    )
+    # Screen recording / microphone usage descriptions
+    set_target_properties(NotionRecorder PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist"
+    )
+endif()
+
+if(WIN32)
+    # FFmpeg prebuilt directory. Point FFMPEG_DIR at a shared build with
+    # bin/include/lib layout (e.g. from gyan.dev / BtbN).
+    set(FFMPEG_DIR "" CACHE PATH "Path to FFmpeg shared build (bin/include/lib)")
+    if(NOT FFMPEG_DIR)
+        set(FFMPEG_DIR "$ENV{FFMPEG_DIR}")
+    endif()
+    if(NOT FFMPEG_DIR)
+        message(FATAL_ERROR "FFMPEG_DIR must point to an FFmpeg shared build")
+    endif()
+
+    target_sources(NotionRecorder PRIVATE
+        src/capture/windows/DXGICapturer.cpp
+        src/capture/windows/DXGICapturer.h
+        src/capture/windows/WASAPICapturer.cpp
+        src/capture/windows/WASAPICapturer.h
+    )
+    target_include_directories(NotionRecorder PRIVATE
+        src
+        "${FFMPEG_DIR}/include"
+    )
+    target_compile_definitions(NotionRecorder PRIVATE QT_NO_KEYWORDS)
+
+    set(FFMPEG_LIBS avformat avcodec avutil swscale swresample)
+    target_link_libraries(NotionRecorder PRIVATE
+        Qt6::Quick
+        Qt6::Qml
+        d3d11 dxgi d2d1
+        ole32 oleaut32 uuid user32 gdi32 winmm ws2_32
+    )
+    foreach(lib IN LISTS FFMPEG_LIBS)
+        target_link_libraries(NotionRecorder PRIVATE
+            "${FFMPEG_DIR}/lib/${lib}.lib"
+        )
+    endforeach()
+
+    # Copy FFmpeg DLLs next to the exe so it runs from the build directory.
+    add_custom_command(TARGET NotionRecorder POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${FFMPEG_DIR}/bin" "$<TARGET_FILE_DIR:NotionRecorder>"
+        COMMENT "Copying FFmpeg DLLs next to executable"
+    )
 endif()
 
 set_target_properties(NotionRecorder PROPERTIES
@@ -147,24 +208,3 @@ qt_add_qml_module(NotionRecorder
 # Deploy the QML module into the app bundle (qmldir + sources) and finalize
 # macOS bundle metadata.
 qt_finalize_executable(NotionRecorder)
-
-set_source_files_properties(
-    src/capture/macos/ScreenCaptureKitCapturer.mm
-    src/capture/macos/CoreAudioCapturer.mm
-    PROPERTIES COMPILE_OPTIONS "-fobjc-arc"
-)
-
-if(APPLE)
-    # Deploy the generated QML module directory into the bundle so the app
-    # runs from build/NotionRecorder.app without extra import paths.
-    add_custom_command(TARGET NotionRecorder POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_BINARY_DIR}/NotionRecorder"
-            "$<TARGET_BUNDLE_CONTENT_DIR:NotionRecorder>/Resources/qml/NotionRecorder"
-        COMMENT "Deploying QML module into app bundle"
-    )
-    # Screen recording / microphone usage descriptions
-    set_target_properties(NotionRecorder PROPERTIES
-        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist"
-    )
-endif()

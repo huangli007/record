@@ -137,16 +137,40 @@ bool VideoEncoder::open(const Options& options, PacketCallback onPacket) {
 
     if (codec == "auto" || codec == "h264" || codec == "h265") {
         if (wantH265) {
+#if defined(__APPLE__)
             if (openHardware("hevc_videotoolbox")) {
                 return true;
             }
+#else
+            if (openHardware("hevc_nvenc")) {
+                return true;
+            }
+            if (openHardware("hevc_qsv")) {
+                return true;
+            }
+            if (openHardware("hevc_amf")) {
+                return true;
+            }
+#endif
             if (openSoftware("libx265")) {
                 return true;
             }
         } else {
+#if defined(__APPLE__)
             if (openHardware("h264_videotoolbox")) {
                 return true;
             }
+#else
+            if (openHardware("h264_nvenc")) {
+                return true;
+            }
+            if (openHardware("h264_qsv")) {
+                return true;
+            }
+            if (openHardware("h264_amf")) {
+                return true;
+            }
+#endif
             if (openSoftware("libx264")) {
                 return true;
             }
@@ -171,7 +195,11 @@ bool VideoEncoder::openHardware(const std::string& encoderName) {
     codecCtx_->gop_size = options_.fps * 2;
     codecCtx_->max_b_frames = 0;
     codecCtx_->thread_count = 0;
+#if defined(__APPLE__)
     codecCtx_->pix_fmt = AV_PIX_FMT_VIDEOTOOLBOX;
+#else
+    codecCtx_->pix_fmt = AV_PIX_FMT_NV12;
+#endif
     codecCtx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     codecCtx_->bit_rate = static_cast<int64_t>(options_.bitrateKbps) * 1000;
     if (options_.bitrateMode == BitrateMode::FileSize) {
@@ -232,9 +260,15 @@ bool VideoEncoder::openSoftware(const std::string& encoderName) {
 }
 
 bool VideoEncoder::encode(VideoFrame&& frame) {
+#if defined(__APPLE__)
     if (!codecCtx_ || !frame.pixelBuffer) {
         return false;
     }
+#else
+    if (!codecCtx_ || frame.bgra.empty()) {
+        return false;
+    }
+#endif
 
     AVFrame* avFrame = av_frame_alloc();
     if (!avFrame) {
@@ -242,6 +276,7 @@ bool VideoEncoder::encode(VideoFrame&& frame) {
     }
     avFrame->pts = frameIndex_++;
 
+#if defined(__APPLE__)
     if (hardware_) {
         CVPixelBufferRef pb = frame.pixelBuffer;
         CVPixelBufferRef scaled = nullptr;
@@ -301,6 +336,40 @@ bool VideoEncoder::encode(VideoFrame&& frame) {
         av_frame_free(&avFrame);
         avFrame = yuv;
     }
+#else
+    // Windows path: raw BGRA rows -> NV12 (hardware) or YUV420P (software).
+    if (frame.bgra.empty() || frame.height <= 0) {
+        av_frame_free(&avFrame);
+        return false;
+    }
+    const int srcStride =
+        frame.stride > 0 ? frame.stride
+                         : static_cast<int>(frame.bgra.size()) / frame.height;
+    const AVPixelFormat dstFmt =
+        static_cast<AVPixelFormat>(codecCtx_->pix_fmt);
+    SwsContext* sws = sws_getContext(
+        frame.width, frame.height, AV_PIX_FMT_BGRA,
+        options_.width, options_.height, dstFmt,
+        SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+    if (!sws) {
+        av_frame_free(&avFrame);
+        return false;
+    }
+    AVFrame* converted = av_frame_alloc();
+    converted->format = dstFmt;
+    converted->width = options_.width;
+    converted->height = options_.height;
+    converted->pts = avFrame->pts;
+    av_frame_get_buffer(converted, 32);
+
+    const uint8_t* srcData[4] = {frame.bgra.data(), nullptr, nullptr, nullptr};
+    const int srcLinesize[4] = {srcStride, 0, 0, 0};
+    sws_scale(sws, srcData, srcLinesize, 0, frame.height,
+              converted->data, converted->linesize);
+    sws_freeContext(sws);
+    av_frame_free(&avFrame);
+    avFrame = converted;
+#endif
 
     const int ret = avcodec_send_frame(codecCtx_, avFrame);
     av_frame_free(&avFrame);

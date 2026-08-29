@@ -13,7 +13,9 @@
 #include <vector>
 
 #include "core/RecordingSession.h"
+#if defined(__APPLE__)
 #include "capture/macos/CoreAudioTapCapturer.h"
+#endif
 #include "ui/AppController.h"
 
 namespace {
@@ -72,6 +74,7 @@ int runRecordTest(int seconds) {
 
 // Hidden diagnostic mode: starts only the CoreAudio system-audio tap (no
 // screen capture needed) and reports whether audio buffers arrive.
+#if defined(__APPLE__)
 int runTapTest(int seconds) {
     if (seconds <= 0) {
         seconds = 6;
@@ -122,6 +125,7 @@ int runTapTest(int seconds) {
     }
     return 0;
 }
+#endif
 
 } // namespace
 
@@ -129,9 +133,11 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--record-test") {
         return runRecordTest(std::atoi(argv[2]));
     }
+#if defined(__APPLE__)
     if (argc >= 3 && std::string(argv[1]) == "--tap-test") {
         return runTapTest(std::atoi(argv[2]));
     }
+#endif
     QGuiApplication app(argc, argv);
     QCoreApplication::setApplicationName("NotionRecorder");
     QCoreApplication::setOrganizationName("NotionRecorder");

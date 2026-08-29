@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QCoreApplication>
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QSettings>
@@ -10,12 +11,20 @@
 
 #include <cmath>
 
-#include "capture/macos/ScreenCaptureKitCapturer.h"
-
 #if defined(__APPLE__)
 #include <Carbon/Carbon.h>
 #include <mach/mach_host.h>
 #include <mach/processor_info.h>
+#include "capture/macos/ScreenCaptureKitCapturer.h"
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include "capture/windows/DXGICapturer.h"
 #endif
 
 namespace nr {
@@ -81,6 +90,22 @@ bool readCpuTicks(long long& user, long long& system, long long& idle) {
                   numCpuInfo * sizeof(processor_cpu_load_info));
     return true;
 }
+#elif defined(_WIN32)
+// System-wide CPU ticks via GetSystemTimes; caller keeps previous values.
+bool readCpuTicks(long long& user, long long& system, long long& idle) {
+    FILETIME idleTime{}, kernelTime{}, userTime{};
+    if (!GetSystemTimes(&idleTime, &kernelTime, &userTime)) {
+        return false;
+    }
+    auto toTicks = [](const FILETIME& ft) -> long long {
+        return (static_cast<long long>(ft.dwHighDateTime) << 32) +
+               ft.dwLowDateTime;
+    };
+    user = toTicks(userTime);
+    system = toTicks(kernelTime) - toTicks(idleTime);
+    idle = toTicks(idleTime);
+    return true;
+}
 #endif
 
 } // namespace
@@ -107,12 +132,20 @@ AppController::AppController(QObject* parent)
             });
         }
     });
-#if defined(__APPLE__)
     setupHotkeys();
+#if defined(_WIN32)
+    qApp->installNativeEventFilter(this);
 #endif
 }
 
 AppController::~AppController() {
+#if defined(_WIN32)
+    qApp->removeNativeEventFilter(this);
+    if (hotkeysInstalled_) {
+        UnregisterHotKey(nullptr, 1);
+        UnregisterHotKey(nullptr, 2);
+    }
+#endif
 #if defined(__APPLE__)
     if (hotKeyToggleRef_) {
         UnregisterEventHotKey(reinterpret_cast<EventHotKeyRef>(hotKeyToggleRef_));
@@ -124,6 +157,31 @@ AppController::~AppController() {
         RemoveEventHandler(reinterpret_cast<EventHandlerRef>(hotKeyEventHandlerRef_));
     }
 #endif
+}
+
+bool AppController::nativeEventFilter(const QByteArray& eventType, void* message,
+                                      qintptr* result) {
+#if defined(_WIN32)
+    (void)result;
+    if (eventType == "windows_generic_MSG") {
+        const MSG* msg = static_cast<const MSG*>(message);
+        if (msg->message == WM_HOTKEY) {
+            if (msg->wParam == 1) {
+                toggleRecording();
+                return true;
+            }
+            if (msg->wParam == 2) {
+                togglePause();
+                return true;
+            }
+        }
+    }
+#else
+    (void)eventType;
+    (void)message;
+    (void)result;
+#endif
+    return false;
 }
 
 QString AppController::statusText() const {
@@ -466,7 +524,7 @@ void AppController::handleState(RecordingSession::State state) {
 
 void AppController::refreshStats() {
     if (session_) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
         long long user = 0, system = 0, idle = 0;
         if (readCpuTicks(user, system, idle)) {
             const long long totalDelta =
@@ -503,7 +561,14 @@ void AppController::setupHotkeys() {
                         reinterpret_cast<EventHotKeyRef*>(&hotKeyPauseRef_));
 }
 #else
-void AppController::setupHotkeys() {}
+void AppController::setupHotkeys() {
+#if defined(_WIN32)
+    // Ctrl+Shift+R -> start/stop, Ctrl+Shift+P -> pause/resume.
+    hotkeysInstalled_ =
+        RegisterHotKey(nullptr, 1, MOD_CONTROL | MOD_SHIFT, 'R') &&
+        RegisterHotKey(nullptr, 2, MOD_CONTROL | MOD_SHIFT, 'P');
+#endif
+}
 #endif
 
 void AppController::setRegion(int x, int y, int width, int height) {
@@ -529,7 +594,11 @@ void AppController::setCaptureMode(int mode) {
 }
 
 void AppController::refreshWindows() {
+#if defined(__APPLE__)
     windowInfos_ = ScreenCaptureKitCapturer::listWindows();
+#elif defined(_WIN32)
+    windowInfos_ = DXGICapturer::listWindows();
+#endif
     windowList_.clear();
     for (const WindowInfo& w : windowInfos_) {
         QVariantMap entry;
