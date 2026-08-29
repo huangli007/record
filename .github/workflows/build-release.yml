@@ -44,7 +44,7 @@ jobs:
       - name: Deploy Qt runtime
         shell: pwsh
         run: |
-          & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations build\Release\NotionRecorder.exe
+          & "$env:Qt6_DIR\bin\windeployqt.exe" --release --no-translations build\Release\NotionRecorder.exe
 
       - name: Stage package
         shell: pwsh
