@@ -16,6 +16,17 @@
 #include <functiondiscoverykeys_devpkey.h>
 #include <ksmedia.h>
 
+// audioclient.h / mmdeviceapi.h declare these GUIDs as extern, but some
+// Windows SDK / linker configurations do not provide their definitions
+// through uuid.lib. Define the standard values here so the link always
+// succeeds (they are only pulled from uuid.lib when left undefined).
+EXTERN_C const CLSID CLSID_MMDeviceEnumerator = {
+    0xBCDE0395, 0xE52F, 0x467C,
+    {0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E}};
+EXTERN_C const IID IID_IAudioClient = {
+    0x1CB9AD4C, 0xDBFA, 0x4C32,
+    {0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2}};
+
 #include <atomic>
 #include <chrono>
 #include <cmath>
