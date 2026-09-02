@@ -192,7 +192,7 @@ Item {
             }
         }
 
-        // Settings
+        // Settings (gear icon drawn with Canvas for consistent rendering)
         Rectangle {
             id: settingsButton
             objectName: "settingsButton"
@@ -202,11 +202,39 @@ Item {
             radius: 5
             color: "transparent"
 
-            Text {
+            Canvas {
                 anchors.centerIn: parent
-                text: "⚙"
-                font.pixelSize: 16
-                color: "#37352F"
+                width: 16
+                height: 16
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.reset()
+                    ctx.strokeStyle = "#37352F"
+                    ctx.fillStyle = "#37352F"
+                    ctx.lineWidth = 1.3
+                    ctx.lineCap = "round"
+                    // Outer gear teeth
+                    var cx = 8, cy = 8, r = 6, teeth = 8, toothH = 1.8
+                    ctx.beginPath()
+                    for (var i = 0; i < teeth; i++) {
+                        var a = i * 2 * Math.PI / teeth
+                        var hw = Math.PI / teeth * 0.4
+                        ctx.moveTo(cx + (r - toothH) * Math.cos(a - hw),
+                                   cy + (r - toothH) * Math.sin(a - hw))
+                        ctx.lineTo(cx + r * Math.cos(a - hw * 0.6),
+                                   cy + r * Math.sin(a - hw * 0.6))
+                        ctx.lineTo(cx + r * Math.cos(a + hw * 0.6),
+                                   cy + r * Math.sin(a + hw * 0.6))
+                        ctx.lineTo(cx + (r - toothH) * Math.cos(a + hw),
+                                   cy + (r - toothH) * Math.sin(a + hw))
+                    }
+                    ctx.closePath()
+                    ctx.stroke()
+                    // Inner circle (center hole)
+                    ctx.beginPath()
+                    ctx.arc(cx, cy, 2.2, 0, 2 * Math.PI)
+                    ctx.stroke()
+                }
             }
 
             MouseArea {

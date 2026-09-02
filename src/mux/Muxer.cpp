@@ -29,9 +29,11 @@ bool Muxer::open(const std::string& path,
     fmtCtx_ = ctx;
 
     if (format == "mp4") {
-        // Fragmented MP4: crash-safe, playable even if the app is killed.
+        // faststart places the moov atom at the front so players can start
+        // playback immediately.  frag_keyframe keeps the file playable even
+        // if recording is interrupted (each fragment is self-contained).
         av_opt_set(fmtCtx_->priv_data, "movflags",
-                   "frag_keyframe+empty_moov+default_base_moof", 0);
+                   "faststart+frag_keyframe+separate_moof+default_base_moof", 0);
     }
 
     if (videoPar) {

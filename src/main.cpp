@@ -144,8 +144,15 @@ int main(int argc, char** argv) {
 
     nr::AppController controller;
     QQmlApplicationEngine engine;
+    // On macOS the QML module lives inside the .app bundle's Resources
+    // directory; on Windows it is next to the executable.
+#if defined(__APPLE__)
     engine.addImportPath(QCoreApplication::applicationDirPath() +
                          QStringLiteral("/../Resources/qml"));
+#else
+    engine.addImportPath(QCoreApplication::applicationDirPath() +
+                         QStringLiteral("/qml"));
+#endif
     engine.rootContext()->setContextProperty("app", &controller);
 
     QObject::connect(

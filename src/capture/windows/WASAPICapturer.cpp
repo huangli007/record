@@ -32,6 +32,7 @@ EXTERN_C const IID IID_IAudioClient = {
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <future>
 #include <thread>
 #include <vector>
 
@@ -87,7 +88,11 @@ struct WASAPICapturer::Impl {
     }
 
     bool startClient() {
-        if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {
+        // Initialize COM on this thread (the capture thread).  Using
+        // COINIT_MULTITHREADED lets the audio client be used from the same
+        // thread that created it, avoiding cross-thread COM issues.
+        HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (FAILED(comHr) && comHr != RPC_E_CHANGED_MODE) {
             return false;
         }
         comInitialized = true;
@@ -146,8 +151,9 @@ struct WASAPICapturer::Impl {
             validBits = bytesPerSample * 8;
         }
 
-        // 100 ms buffer, shared mode (loopback requires shared mode).
-        const REFERENCE_TIME bufferDuration = 10000000LL / 10;
+        // 500 ms buffer for reliable capture across all audio drivers.
+        // Shared mode is required for loopback capture.
+        const REFERENCE_TIME bufferDuration = 50000000LL;  // 500ms
         const DWORD flags = loopback ? AUDCLNT_STREAMFLAGS_LOOPBACK : 0;
         HRESULT initHr = audioClient->Initialize(
             AUDCLNT_SHAREMODE_SHARED, flags, bufferDuration, 0, mixFormat, nullptr);
@@ -237,7 +243,17 @@ struct WASAPICapturer::Impl {
     }
 
     void captureLoop() {
-        const int sleepMs = 5;
+        // COM must be initialized on this thread for WASAPI to work.
+        // startClient() already calls CoInitializeEx, but if the capture
+        // thread is different from the thread that called startClient(),
+        // we re-initialize here.
+        bool localCom = false;
+        HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (SUCCEEDED(comHr) || comHr == RPC_E_CHANGED_MODE) {
+            localCom = true;
+        }
+
+        const int sleepMs = 10;
         while (running.load()) {
             UINT32 packetLength = 0;
             if (FAILED(captureClient->GetNextPacketSize(&packetLength))) {
@@ -254,7 +270,9 @@ struct WASAPICapturer::Impl {
             const HRESULT hr = captureClient->GetBuffer(
                 &data, &frames, &flags, nullptr, nullptr);
             if (FAILED(hr) || !data || frames == 0) {
-                captureClient->ReleaseBuffer(frames);
+                if (data || frames > 0) {
+                    captureClient->ReleaseBuffer(frames);
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
                 continue;
             }
@@ -290,6 +308,10 @@ struct WASAPICapturer::Impl {
             captureClient->ReleaseBuffer(frames);
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+
+        if (localCom) {
+            CoUninitialize();
+        }
     }
 };
 
@@ -313,14 +335,33 @@ bool WASAPICapturer::start(const AudioConfig& config,
         (impl_->loopback ? config.systemVolume : config.micVolume)) / 100.0f);
     impl_->paused.store(false);
     impl_->samplesConsumed = 0;
+    impl_->running.store(true);
 
-    if (!impl_->startClient()) {
-        impl_->cleanup();
+    // Start the capture thread first; it will initialize COM and the audio
+    // client on the same thread that will read audio data.
+    std::promise<bool> started;
+    auto future = started.get_future();
+    impl_->captureThread = std::thread([this, &started] {
+        if (!impl_->startClient()) {
+            impl_->cleanup();
+            impl_->running.store(false);
+            started.set_value(false);
+            return;
+        }
+        started.set_value(true);
+        impl_->captureLoop();
+    });
+
+    // Wait up to 2 seconds for the audio client to initialize.
+    if (future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout ||
+        !future.get()) {
+        impl_->running.store(false);
+        if (impl_->captureThread.joinable()) {
+            impl_->captureThread.join();
+        }
         impl_->onFrame = nullptr;
         return false;
     }
-    impl_->running.store(true);
-    impl_->captureThread = std::thread([this] { impl_->captureLoop(); });
     return true;
 }
 

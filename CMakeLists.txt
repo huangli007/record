@@ -183,6 +183,14 @@ if(WIN32)
             "${FFMPEG_DIR}/bin" "$<TARGET_FILE_DIR:NotionRecorder>"
         COMMENT "Copying FFmpeg DLLs next to executable"
     )
+    # Deploy the generated QML module directory into the output folder so
+    # the QML engine can find the NotionRecorder module at runtime.
+    add_custom_command(TARGET NotionRecorder POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/NotionRecorder"
+            "$<TARGET_FILE_DIR:NotionRecorder>/qml/NotionRecorder"
+        COMMENT "Deploying QML module next to executable"
+    )
 endif()
 
 set_target_properties(NotionRecorder PROPERTIES

@@ -531,7 +531,7 @@ Window {
                     border.color: "#E3E2E0"
                     Text {
                         anchors.centerIn: parent
-                        text: "⌘⇧R"
+                        text: Qt.platform.os === "osx" ? "⌘⇧R" : "Ctrl+Shift+R"
                         font.pixelSize: 13
                         color: "#37352F"
                     }
@@ -546,14 +546,16 @@ Window {
                     border.color: "#E3E2E0"
                     Text {
                         anchors.centerIn: parent
-                        text: "⌘⇧P"
+                        text: Qt.platform.os === "osx" ? "⌘⇧P" : "Ctrl+Shift+P"
                         font.pixelSize: 13
                         color: "#37352F"
                     }
                 }
 
                 Text {
-                    text: "全局热键已启用：⌘⇧R 开始/停止，⌘⇧P 暂停/继续"
+                    text: Qt.platform.os === "osx"
+                          ? "全局热键已启用：⌘⇧R 开始/停止，⌘⇧P 暂停/继续"
+                          : "全局热键已启用：Ctrl+Shift+R 开始/停止，Ctrl+Shift+P 暂停/继续"
                     font.pixelSize: 11
                     color: "#D3D1CA"
                 }
