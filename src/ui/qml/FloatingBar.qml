@@ -312,14 +312,15 @@ Item {
             width: 24
             height: 24
             radius: 4
-            color: quitHover.hovered ? "#F1F1EF" : "transparent"
+            property bool quitHovered: false
+            color: quitHovered ? "#F1F1EF" : "transparent"
 
             Canvas {
                 id: quitIcon
                 anchors.centerIn: parent
                 width: 14
                 height: 14
-                property bool hovered: false
+                property bool hovered: quitButton.quitHovered
                 onPaint: {
                     const ctx = getContext("2d")
                     ctx.reset()
@@ -341,17 +342,16 @@ Item {
             }
 
             MouseArea {
-                id: quitHover
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
                 hoverEnabled: true
-                onEntered: quitIcon.hovered = true
-                onExited: quitIcon.hovered = false
+                onEntered: quitButton.quitHovered = true
+                onExited: quitButton.quitHovered = false
                 onClicked: app.quit()
             }
 
             ToolTip.text: "退出程序"
-            ToolTip.visible: quitHover.hovered
+            ToolTip.visible: quitButton.quitHovered
             ToolTip.delay: 400
         }
     }
