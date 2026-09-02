@@ -4,6 +4,7 @@ project(NotionRecorder VERSION 0.1.2 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 # macOS deployment target: ScreenCaptureKit requires macOS 12.3+
 set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target")
@@ -157,6 +158,9 @@ if(WIN32)
         src/capture/windows/DXGICapturer.h
         src/capture/windows/WASAPICapturer.cpp
         src/capture/windows/WASAPICapturer.h
+        # Embeds the application icon (IDI_ICON1) into the .exe so Explorer
+        # and the taskbar show the NotionRecorder icon.
+        resources/icon/notionrecorder.rc
     )
     target_include_directories(NotionRecorder PRIVATE
         src
@@ -212,6 +216,9 @@ qt_add_qml_module(NotionRecorder
         src/ui/qml/AnnotationOverlay.qml
         src/ui/qml/RecordingHistory.qml
 )
+
+# Shared icon resource (window / dock icon at runtime on every platform).
+target_sources(NotionRecorder PRIVATE resources/icon/icons.qrc)
 
 # Deploy the QML module into the app bundle (qmldir + sources) and finalize
 # macOS bundle metadata.

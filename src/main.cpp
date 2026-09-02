@@ -1,5 +1,6 @@
 #include <QGuiApplication>
 #include <QCoreApplication>
+#include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
@@ -141,6 +142,9 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     QCoreApplication::setApplicationName("NotionRecorder");
     QCoreApplication::setOrganizationName("NotionRecorder");
+    QCoreApplication::setApplicationDisplayName("NotionRecorder");
+    // Default application icon (also used by the dock/taskbar while running).
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/app.png")));
 
     nr::AppController controller;
     QQmlApplicationEngine engine;

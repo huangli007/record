@@ -304,7 +304,7 @@ Item {
 
         Item { width: 1; height: 1 }
 
-        // Quit button
+        // Quit button (exit application)
         Rectangle {
             id: quitButton
             objectName: "quitButton"
@@ -312,24 +312,47 @@ Item {
             width: 24
             height: 24
             radius: 4
-            color: "transparent"
+            color: quitHover.hovered ? "#F1F1EF" : "transparent"
 
-            Text {
+            Canvas {
+                id: quitIcon
                 anchors.centerIn: parent
-                text: "×"
-                font.pixelSize: 16
-                font.weight: Font.Medium
-                color: "#9B9A97"
+                width: 14
+                height: 14
+                property bool hovered: false
+                onPaint: {
+                    const ctx = getContext("2d")
+                    ctx.reset()
+                    ctx.strokeStyle = quitIcon.hovered ? "#EB5757" : "#9B9A97"
+                    ctx.lineWidth = 1.6
+                    ctx.lineCap = "round"
+                    // Power-off style: circle with a gap at the top + vertical line
+                    ctx.beginPath()
+                    const a0 = Math.PI * 1.5 + 0.32   // just past the top gap
+                    const a1 = a0 + Math.PI * 2 - 0.64
+                    ctx.arc(7, 7.4, 4.8, a0, a1)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(7, 1.4)
+                    ctx.lineTo(7, 7.4)
+                    ctx.stroke()
+                }
+                onHoveredChanged: requestPaint()
             }
 
             MouseArea {
+                id: quitHover
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
                 hoverEnabled: true
-                onEntered: quitButton.color = "#F1F1EF"
-                onExited: quitButton.color = "transparent"
+                onEntered: quitIcon.hovered = true
+                onExited: quitIcon.hovered = false
                 onClicked: app.quit()
             }
+
+            ToolTip.text: "退出程序"
+            ToolTip.visible: quitHover.hovered
+            ToolTip.delay: 400
         }
     }
 
