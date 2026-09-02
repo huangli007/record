@@ -275,15 +275,36 @@ void RecordingSession::stop() {
     // encoder has produced any packets) the file would otherwise contain
     // only an empty moov and no media data.
     if (muxer_ && videoEncoder_ && !muxer_->hasWrittenPackets()) {
+        const int w = config_.video.width > 0 ? config_.video.width : 1920;
+        const int h = config_.video.height > 0 ? config_.video.height : 1080;
+#if defined(__APPLE__)
+        // On macOS, create a black CVPixelBuffer for the dummy frame.
+        CVPixelBufferRef pb = nullptr;
+        CVPixelBufferCreate(kCFAllocatorDefault, w, h,
+                            kCVPixelFormatType_32BGRA, nullptr, &pb);
+        if (pb) {
+            CVPixelBufferLockBaseAddress(pb, 0);
+            std::memset(CVPixelBufferGetBaseAddress(pb), 0,
+                        CVPixelBufferGetBytesPerRow(pb) * h);
+            CVPixelBufferUnlockBaseAddress(pb, 0);
+            VideoFrame dummy(pb);
+            dummy.width = w;
+            dummy.height = h;
+            dummy.ptsUs = 0;
+            dummy.durationUs = 1;
+            videoEncoder_->encode(std::move(dummy));
+            CVPixelBufferRelease(pb);
+        }
+#else
         VideoFrame dummy{};
-        dummy.width = config_.video.width > 0 ? config_.video.width : 1920;
-        dummy.height = config_.video.height > 0 ? config_.video.height : 1080;
-        dummy.bgra.resize(
-            static_cast<size_t>(dummy.width) * dummy.height * 4, 0);
-        dummy.stride = dummy.width * 4;
+        dummy.width = w;
+        dummy.height = h;
+        dummy.bgra.resize(static_cast<size_t>(w) * h * 4, 0);
+        dummy.stride = w * 4;
         dummy.ptsUs = 0;
         dummy.durationUs = 1;
         videoEncoder_->encode(std::move(dummy));
+#endif
         videoEncoder_->flush();
         // Drain any packets that the encode + flush produced.
         while (auto pkt = videoPacketQueue_.pop(
