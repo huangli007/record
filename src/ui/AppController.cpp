@@ -837,4 +837,11 @@ void AppController::revealLastFile() {
     }
 }
 
+void AppController::quit() {
+    if (session_ && (isRecording() || isPaused())) {
+        stopRecording();
+    }
+    QCoreApplication::quit();
+}
+
 } // namespace nr

@@ -126,6 +126,8 @@ public:
     Q_INVOKABLE void openOutputFolder();
     Q_INVOKABLE void revealLastFile();
     Q_INVOKABLE void toggleAnnotationMode();
+    // Stops any active recording and exits the application.
+    Q_INVOKABLE void quit();
 
 Q_SIGNALS:
     void stateChanged();

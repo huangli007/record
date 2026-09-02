@@ -301,6 +301,36 @@ Item {
                 onClicked: app.toggleAnnotationMode()
             }
         }
+
+        Item { width: 1; height: 1 }
+
+        // Quit button
+        Rectangle {
+            id: quitButton
+            objectName: "quitButton"
+            anchors.verticalCenter: parent.verticalCenter
+            width: 24
+            height: 24
+            radius: 4
+            color: "transparent"
+
+            Text {
+                anchors.centerIn: parent
+                text: "×"
+                font.pixelSize: 16
+                font.weight: Font.Medium
+                color: "#9B9A97"
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                hoverEnabled: true
+                onEntered: quitButton.color = "#F1F1EF"
+                onExited: quitButton.color = "transparent"
+                onClicked: app.quit()
+            }
+        }
     }
 
     // Tiny CPU load indicator while recording (PRD performance monitoring).
