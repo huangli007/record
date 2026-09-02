@@ -60,6 +60,18 @@ public:
     int height() const { return options_.height; }
     int fps() const { return options_.fps; }
 
+    // Swap out / replace the packet callback.  Used by RecordingSession
+    // to write a dummy frame directly to the muxer when the packet queue
+    // is already closed.
+    PacketCallback takePacketCallback() {
+        PacketCallback cb;
+        std::swap(cb, onPacket_);
+        return cb;
+    }
+    void setPacketCallback(PacketCallback cb) {
+        onPacket_ = std::move(cb);
+    }
+
 private:
     bool openHardware(const std::string& encoderName);
     bool openSoftware(const std::string& encoderName);

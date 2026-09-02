@@ -29,12 +29,10 @@ bool Muxer::open(const std::string& path,
     fmtCtx_ = ctx;
 
     if (format == "mp4") {
-        // Fragmented MP4: each fragment (moof+mdat) is self-contained so
-        // the file is playable even if recording is interrupted.
-        // empty_moov writes a minimal moov upfront; the real sample tables
-        // live inside each fragment's moof.
-        av_opt_set(fmtCtx_->priv_data, "movflags",
-                   "frag_keyframe+empty_moov+default_base_moof", 0);
+        // Standard MP4 with faststart: the moov atom is written at the end
+        // then moved to the front on close, so the file is immediately
+        // playable by all players (Windows Media Player, Movies & TV, etc.).
+        av_opt_set(fmtCtx_->priv_data, "movflags", "faststart", 0);
     }
 
     if (videoPar) {

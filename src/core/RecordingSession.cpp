@@ -272,13 +272,22 @@ void RecordingSession::stop() {
     }
     // Ensure the file contains at least one video frame so it is always
     // playable.  When the user stops recording immediately (before the
-    // encoder has produced any packets) the file would otherwise contain
-    // only an empty moov and no media data.
+    // encoder has produced any packets) the file would otherwise be empty.
     if (muxer_ && videoEncoder_ && !muxer_->hasWrittenPackets()) {
+        // Temporarily swap in a direct-write callback so the encoder's
+        // output goes straight to the muxer (the packet queue is closed).
+        auto savedCb = videoEncoder_->takePacketCallback();
+        videoEncoder_->setPacketCallback(
+            [this](EncodedPacket p) {
+                p.streamIndex = 0;
+                if (muxer_) {
+                    ensureMuxHeader();
+                    muxer_->write(p);
+                }
+            });
         const int w = config_.video.width > 0 ? config_.video.width : 1920;
         const int h = config_.video.height > 0 ? config_.video.height : 1080;
 #if defined(__APPLE__)
-        // On macOS, create a black CVPixelBuffer for the dummy frame.
         CVPixelBufferRef pb = nullptr;
         CVPixelBufferCreate(kCFAllocatorDefault, w, h,
                             kCVPixelFormatType_32BGRA, nullptr, &pb);
@@ -306,11 +315,7 @@ void RecordingSession::stop() {
         videoEncoder_->encode(std::move(dummy));
 #endif
         videoEncoder_->flush();
-        // Drain any packets that the encode + flush produced.
-        while (auto pkt = videoPacketQueue_.pop(
-                    std::chrono::milliseconds(0))) {
-            muxer_->write(*pkt);
-        }
+        videoEncoder_->setPacketCallback(std::move(savedCb));
     }
     if (muxer_) {
         muxer_->close();
