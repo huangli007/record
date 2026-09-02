@@ -39,6 +39,8 @@ public:
     bool write(const EncodedPacket& packet);
     bool close();
     bool isOpen() const { return fmtCtx_ != nullptr; }
+    // Returns true if at least one encoded packet has been written.
+    bool hasWrittenPackets() const;
 
 private:
     AVFormatContext* fmtCtx_ = nullptr;
