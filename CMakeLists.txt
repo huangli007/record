@@ -12,7 +12,7 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment ta
 find_package(Qt6 6.4 REQUIRED COMPONENTS Quick Qml)
 qt_policy(SET QTP0004 NEW)
 
-qt_add_executable(NotionRecorder
+qt_add_executable(NotionRecorder WIN32
     src/main.cpp
     src/audio/Denoiser.cpp
     src/audio/Denoiser.h

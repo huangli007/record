@@ -827,7 +827,14 @@ void AppController::saveSettings() {
 }
 
 void AppController::openOutputFolder() {
-    const QString dir = QString::fromStdString(config_.general.outputDir);
+    QString dir = QString::fromStdString(config_.general.outputDir);
+    // Expand the "~" shorthand (the default ~/Videos/NotionRecorder would
+    // otherwise not exist as a literal path and the folder would not open).
+    if (dir.startsWith(QLatin1Char('~'))) {
+        dir.replace(0, 1, QDir::homePath());
+    }
+    // Make sure the folder exists before asking Explorer/Finder to open it.
+    QDir().mkpath(dir);
     QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 

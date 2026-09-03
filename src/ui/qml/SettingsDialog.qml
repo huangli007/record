@@ -9,7 +9,7 @@ Window {
     objectName: "settingsDialogWindow"
     width: 700
     height: 460
-    flags: Qt.Dialog
+    flags: Qt.Dialog | Qt.WindowStaysOnTopHint
     modality: Qt.ApplicationModal
     color: "#FFFFFF"
     title: "设置"

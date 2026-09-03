@@ -241,8 +241,24 @@ Item {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if (bar.settingsDialog !== null) {
-                        bar.settingsDialog.visible = true
+                    // Open the settings window right above the main floating
+                    // bar and keep it in front of the always-on-top main UI.
+                    const d = bar.settingsDialog
+                    const m = bar.rootWindow
+                    if (d !== null) {
+                        if (m !== null) {
+                            d.transientParent = m
+                            d.x = Math.round(m.x + (m.width - d.width) / 2)
+                            d.y = Math.round(m.y - d.height - 8)
+                            if (d.y < 0) {   // no room above: open below the bar
+                                d.y = Math.round(m.y + m.height + 8)
+                            }
+                            d.x = Math.max(0, d.x)
+                            d.y = Math.max(0, d.y)
+                        }
+                        d.visible = true
+                        d.raise()
+                        d.requestActivate()
                     }
                 }
             }
